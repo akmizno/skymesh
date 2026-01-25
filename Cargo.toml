@@ -1,0 +1,51 @@
+[package]
+name = "skymesh"
+version = "0.1.0"
+edition = "2024"
+authors = ["Akira Mizuno <akmizno@gmail.com>"]
+description = "A cross-platform mesh viewer for Native and Web."
+repository = "https://github.com/akmizno/skyview"
+license = "MIT OR Apache-2.0"
+readme = "README.md"
+
+[package.metadata.docs.rs]
+all-features = true
+targets = ["x86_64-unknown-linux-gnu", "wasm32-unknown-unknown"]
+
+[dependencies]
+egui = "0.33"
+eframe = { version = "0.33", default-features = false, features = [
+    "accesskit",     # Make egui compatible with screen readers. NOTE: adds a lot of dependencies.
+    "default_fonts", # Embed the default egui fonts.
+    "wgpu",
+    "persistence",   # Enable restoring app state when restarting the app.
+    "wayland",       # To support Linux (and CI)
+    "x11",           # To support older Linux distributions (restores one of the default features)
+] }
+# wgpu
+# NOTE: Specify the same version that eframe depends on.
+wgpu = { version = "27", default-features = false, features = [
+    "vulkan",
+    "webgpu",
+] }
+log = "0.4.27"
+
+# You only need serde if you want app persistence:
+serde = { version = "1.0.219", features = ["derive"] }
+bytemuck = "1.24.0"
+
+# native:
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+env_logger = "0.11.8"
+
+# web:
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen-futures = "0.4.50"
+web-sys = "0.3.70"              # to access the DOM (to hide the loading text)
+
+[profile.release]
+opt-level = 2 # fast and small wasm
+
+# Optimize all dependencies even in debug builds:
+[profile.dev.package."*"]
+opt-level = 2
