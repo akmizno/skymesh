@@ -17,10 +17,10 @@ cargo run --release
 To run the browser version locally, you will need [Trunk](https://trunkrs.dev/):
 
 ```bash
-# Install Trunk if you haven't already
+# Install Trunk if you haven't already.
 cargo install trunk
 
-# Serve the application
+# Serve the application.
 trunk serve --release
 ```
 
