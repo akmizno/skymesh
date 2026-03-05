@@ -11,9 +11,8 @@ use crate::import::{ImportedMesh, import};
 use crate::model::Mesh;
 use crate::render::{Extent2d, ProjectionType, SceneDeta, TriangleRenderer};
 
-/// We derive Deserialize/Serialize so we can persist app state on shutdown.
 #[derive(serde::Deserialize, serde::Serialize)]
-#[serde(default)] // if we add new fields, give them default values when deserializing old state
+#[serde(default)]
 pub struct App {
     projection_type: ProjectionType,
 
@@ -47,7 +46,6 @@ impl Default for App {
 }
 
 impl App {
-    /// Called once before the first frame.
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         let app: Self = if let Some(storage) = cc.storage {
             eframe::get_value(storage, eframe::APP_KEY).unwrap_or_default()
@@ -55,7 +53,12 @@ impl App {
             Default::default()
         };
 
-        // wgpuのレンダリング状態を取得
+        if let Ok(mut scene_data_guard) = app.scene_data.lock() {
+            scene_data_guard
+                .camera_mut()
+                .set_projection_type(app.projection_type.is_perspective());
+        }
+
         let wgpu_render_state = cc
             .wgpu_render_state
             .as_ref()
@@ -78,20 +81,14 @@ impl App {
 }
 
 impl eframe::App for App {
-    /// Called by the framework to save state before shutdown.
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         eframe::set_value(storage, eframe::APP_KEY, self);
     }
 
-    /// Called each time the UI needs repainting, which may be many times per second.
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
-        // Put your widgets into a `SidePanel`, `TopBottomPanel`, `CentralPanel`, `Window` or `Area`.
-        // For inspiration and more examples, go to https://emilk.github.io/egui
         let render_state = frame.wgpu_render_state().unwrap();
 
         egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
-            // The top panel is often a good place for a menu bar:
-
             egui::MenuBar::new().ui(ui, |ui| {
                 ui.menu_button("File", |ui| {
                     if ui.button("Open file...").clicked() {
@@ -134,7 +131,7 @@ impl eframe::App for App {
                                 scene_data_guard
                                     .camera_mut()
                                     .reset_camera_by_aabb(&mesh.aabb());
-                                ctx.request_repaint(); // UIを再描画
+                                ctx.request_repaint();
 
                                 *model_guard = Some((name, mesh));
                             }
@@ -142,7 +139,6 @@ impl eframe::App for App {
                             Ok(())
                         };
 
-                        // Promiseとして非同期処理を開始
                         #[cfg(not(target_arch = "wasm32"))]
                         {
                             self.import_promise =
@@ -203,18 +199,24 @@ impl eframe::App for App {
             if let Some(promise) = &self.import_promise {
                 match promise.ready() {
                     None => {
-                        ui.spinner(); // 読み込み中
+                        ui.spinner();
                     }
                     Some(Ok(_)) => {
-                        ui.heading("Imported.");
+                        ui.label("Imported.");
                     }
                     Some(Err(e)) => {
-                        ui.heading(e.to_string());
+                        ui.label(e.to_string());
                     }
                 };
-            } else {
-                ui.heading("Bottom Panel");
             }
+
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.label(format!(
+                    "{} v{}",
+                    env!("CARGO_PKG_NAME"),
+                    env!("CARGO_PKG_VERSION")
+                ));
+            });
         });
 
         // egui::SidePanel::left("left panel").show(ctx, |ui| {
@@ -261,7 +263,6 @@ impl eframe::App for App {
         });
 
         egui::CentralPanel::default().show(ctx, |ui| {
-            // 描画領域
             let rect = ui.available_rect_before_wrap();
 
             if let Ok(mut scene_data_guard) = self.scene_data.lock() {
@@ -270,7 +271,6 @@ impl eframe::App for App {
                     .set_aspect_ratio(rect.aspect_ratio());
             }
 
-            // マウス入力情報の取得
             ui.input(|i| {
                 if let Ok(mut scene_data_guard) = self.scene_data.lock() {
                     let area_size = (rect.width(), rect.height());
@@ -306,7 +306,6 @@ impl eframe::App for App {
                 );
             }
 
-            // wgpuの描画コールバックを登録
             let cb = egui_wgpu::Callback::new_paint_callback(
                 rect,
                 TriangleCallback {
@@ -315,7 +314,6 @@ impl eframe::App for App {
             );
             ui.painter().add(cb);
 
-            // 4. 描画結果のテクスチャをUIとして表示
             if let Ok(renderer_guard) = self.renderer.lock()
                 && let Some(renderer) = renderer_guard.as_ref()
                 && let Some(target) = renderer.target()
