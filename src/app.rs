@@ -196,26 +196,28 @@ impl eframe::App for App {
         });
 
         egui::TopBottomPanel::bottom("bottom panel").show(ctx, |ui| {
-            if let Some(promise) = &self.import_promise {
-                match promise.ready() {
-                    None => {
-                        ui.spinner();
-                    }
-                    Some(Ok(_)) => {
-                        ui.label("Imported.");
-                    }
-                    Some(Err(e)) => {
-                        ui.label(e.to_string());
-                    }
-                };
-            }
+            ui.horizontal(|ui| {
+                if let Some(promise) = &self.import_promise {
+                    match promise.ready() {
+                        None => {
+                            ui.spinner();
+                        }
+                        Some(Ok(_)) => {
+                            ui.label("Imported.");
+                        }
+                        Some(Err(e)) => {
+                            ui.label(e.to_string());
+                        }
+                    };
+                }
 
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.label(format!(
-                    "{} v{}",
-                    env!("CARGO_PKG_NAME"),
-                    env!("CARGO_PKG_VERSION")
-                ));
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
+                    ui.label(format!(
+                        "{} v{}",
+                        env!("CARGO_PKG_NAME"),
+                        env!("CARGO_PKG_VERSION")
+                    ));
+                });
             });
         });
 

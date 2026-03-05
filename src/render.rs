@@ -196,7 +196,7 @@ impl RenderTarget {
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Depth32Float, // 32bit浮動小数点が一般的
+            format: wgpu::TextureFormat::Depth32Float,
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
             view_formats: &[],
         };
@@ -263,12 +263,10 @@ impl TriangleRenderer {
         let device = &render_state.device;
         let target_format = render_state.target_format;
 
-        // camera_uniformの初期化のみ
         let camera = Camera::default();
         let camera_uniform = CameraUniform::from_camera(&camera);
         let light_uniform = LightUniform::from_camera(&camera);
 
-        // シェーダーの読み込み
         let shader = device.create_shader_module(wgpu::include_wgsl!("shader.wgsl"));
 
         let vertex_buffer_layout = wgpu::VertexBufferLayout {
@@ -299,8 +297,8 @@ impl TriangleRenderer {
                 entries: &[
                     // Camera
                     wgpu::BindGroupLayoutEntry {
-                        binding: 0,                             // シェーダー内の @binding(0) と一致させる
-                        visibility: wgpu::ShaderStages::VERTEX, // 頂点シェーダーで使う
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::VERTEX,
                         ty: wgpu::BindingType::Buffer {
                             ty: wgpu::BufferBindingType::Uniform,
                             has_dynamic_offset: false,
@@ -352,18 +350,17 @@ impl TriangleRenderer {
         let render_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("Render Pipeline Layout"),
-                bind_group_layouts: &[&camera_bind_group_layout], // ここにレイアウトを入れる
+                bind_group_layouts: &[&camera_bind_group_layout],
                 push_constant_ranges: &[],
             });
 
-        // パイプラインの作成
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("Pipeline"),
             layout: Some(&render_pipeline_layout),
             vertex: wgpu::VertexState {
                 module: &shader,
                 entry_point: Some("vs_main"),
-                buffers: &[vertex_buffer_layout], // レイアウトを指定
+                buffers: &[vertex_buffer_layout],
                 compilation_options: Default::default(),
             },
             fragment: Some(wgpu::FragmentState {
@@ -371,20 +368,7 @@ impl TriangleRenderer {
                 entry_point: Some("fs_main"),
                 targets: &[Some(wgpu::ColorTargetState {
                     format: target_format,
-                    // blend: None,
                     blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                    // blend: Some(wgpu::BlendState {
-                    //     color: wgpu::BlendComponent {
-                    //         src_factor: wgpu::BlendFactor::SrcAlpha,
-                    //         dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
-                    //         operation: wgpu::BlendOperation::Add,
-                    //     },
-                    //     alpha: wgpu::BlendComponent {
-                    //         src_factor: wgpu::BlendFactor::One,
-                    //         dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
-                    //         operation: wgpu::BlendOperation::Add,
-                    //     },
-                    // }),
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
                 compilation_options: Default::default(),
@@ -392,8 +376,8 @@ impl TriangleRenderer {
             primitive: wgpu::PrimitiveState::default(),
             depth_stencil: Some(wgpu::DepthStencilState {
                 format: wgpu::TextureFormat::Depth32Float,
-                depth_write_enabled: true, // 距離を書き込む
-                depth_compare: wgpu::CompareFunction::Less, // 「今より近い」場合のみ描画
+                depth_write_enabled: true,
+                depth_compare: wgpu::CompareFunction::Less,
                 stencil: wgpu::StencilState::default(),
                 bias: wgpu::DepthBiasState::default(),
             }),
@@ -518,7 +502,6 @@ impl TriangleRenderer {
 
             render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
 
-            // バッファをスロット0にセットして描画
             render_pass.set_vertex_buffer(0, self.vertex_buffer.as_ref().unwrap().slice(..));
             render_pass.draw(0..self.vertex_buffer_size, 0..1);
         }
