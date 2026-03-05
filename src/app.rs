@@ -1,228 +1,366 @@
-use bytemuck::{Pod, Zeroable};
+use anyhow::{Result, anyhow};
 use eframe::egui_wgpu;
-use wgpu::util::DeviceExt;
+use egui::widgets::RadioButton;
+use poll_promise::Promise;
+use std::path::Path;
+use std::sync::Arc;
+use std::sync::Mutex;
+
+use crate::camera::Camera;
+use crate::import::{ImportedMesh, import};
+use crate::model::Mesh;
+use crate::render::{Extent2d, ProjectionType, SceneDeta, TriangleRenderer};
 
 /// We derive Deserialize/Serialize so we can persist app state on shutdown.
 #[derive(serde::Deserialize, serde::Serialize)]
 #[serde(default)] // if we add new fields, give them default values when deserializing old state
-pub struct TemplateApp {
-    // Example stuff:
-    label: String,
+pub struct App {
+    projection_type: ProjectionType,
 
     #[serde(skip)] // This how you opt-out of serialization of a field
-    value: f32,
+    import_promise: Option<Promise<Result<()>>>,
+
+    #[serde(skip)] // This how you opt-out of serialization of a field
+    model: Arc<Mutex<Option<(String, ImportedMesh)>>>,
+
+    #[serde(skip)] // This how you opt-out of serialization of a field
+    scene_data: Arc<Mutex<SceneDeta>>,
+
+    #[serde(skip)] // This how you opt-out of serialization of a field
+    renderer: Arc<Mutex<Option<TriangleRenderer>>>,
 }
 
-impl Default for TemplateApp {
+impl Default for App {
     fn default() -> Self {
+        let projection_type = ProjectionType::Perspective;
+        let camera = Camera::new(projection_type.is_perspective());
+        let scene_data = SceneDeta::from_camera(camera);
+
         Self {
-            // Example stuff:
-            label: "Hello World!".to_owned(),
-            value: 2.7,
+            projection_type,
+            import_promise: None,
+            model: Arc::new(Mutex::new(None)),
+            scene_data: Arc::new(Mutex::new(scene_data)),
+            renderer: Arc::new(Mutex::new(None)),
         }
     }
 }
 
-impl TemplateApp {
+impl App {
     /// Called once before the first frame.
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
+        let app: Self = if let Some(storage) = cc.storage {
+            eframe::get_value(storage, eframe::APP_KEY).unwrap_or_default()
+        } else {
+            Default::default()
+        };
+
         // wgpuのレンダリング状態を取得
         let wgpu_render_state = cc
             .wgpu_render_state
             .as_ref()
             .expect("Wgpu render state not found");
-        let device = &wgpu_render_state.device;
 
-        // 1. 頂点データ（外から与えるデータ）
-        let vertices = &[
-            Vertex {
-                position: [0.0, 0.5, 0.0],
-                color: [1.0, 0.0, 0.0],
-            },
-            Vertex {
-                position: [-0.5, -0.5, 0.0],
-                color: [0.0, 1.0, 0.0],
-            },
-            Vertex {
-                position: [0.5, -0.5, 0.0],
-                color: [0.0, 0.0, 1.0],
-            },
-        ];
+        let renderer = TriangleRenderer::new(wgpu_render_state);
 
-        // 2. 頂点バッファの作成
-        let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Vertex Buffer"),
-            contents: bytemuck::cast_slice(vertices),
-            usage: wgpu::BufferUsages::VERTEX,
-        });
+        if let Ok(mut renderer_guard) = app.renderer.lock() {
+            *renderer_guard = Some(renderer);
+        }
 
-        // シェーダーの読み込み
-        let shader = device.create_shader_module(wgpu::include_wgsl!("shader.wgsl"));
-
-        let vertex_buffer_layout = wgpu::VertexBufferLayout {
-            array_stride: std::mem::size_of::<Vertex>() as wgpu::BufferAddress,
-            step_mode: wgpu::VertexStepMode::Vertex,
-            attributes: &[
-                wgpu::VertexAttribute {
-                    offset: 0,
-                    shader_location: 0,
-                    format: wgpu::VertexFormat::Float32x3,
-                },
-                wgpu::VertexAttribute {
-                    offset: std::mem::size_of::<[f32; 3]>() as wgpu::BufferAddress,
-                    shader_location: 1,
-                    format: wgpu::VertexFormat::Float32x3,
-                },
-            ],
-        };
-
-        // パイプラインの作成
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("Pipeline"),
-            layout: None,
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_main"),
-                buffers: &[vertex_buffer_layout], // レイアウトを指定
-                compilation_options: Default::default(),
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs_main"),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: wgpu_render_state.target_format,
-                    blend: Some(wgpu::BlendState::REPLACE),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-                compilation_options: Default::default(),
-            }),
-            primitive: wgpu::PrimitiveState::default(),
-            depth_stencil: None,
-            multisample: wgpu::MultisampleState::default(),
-            multiview: None,
-            cache: None,
-        });
-
-        // カスタムリソースとして登録
         wgpu_render_state
             .renderer
             .write()
             .callback_resources
-            .insert(TriangleRenderer {
-                pipeline,
-                vertex_buffer,
-                num_vertices: vertices.len() as u32,
-            });
+            .insert(app.renderer.clone());
 
-        // This is also where you can customize the look and feel of egui using
-        // `cc.egui_ctx.set_visuals` and `cc.egui_ctx.set_fonts`.
-
-        // Load previous app state (if any).
-        // Note that you must enable the `persistence` feature for this to work.
-        if let Some(storage) = cc.storage {
-            eframe::get_value(storage, eframe::APP_KEY).unwrap_or_default()
-        } else {
-            Default::default()
-        }
+        app
     }
 }
 
-impl eframe::App for TemplateApp {
+impl eframe::App for App {
     /// Called by the framework to save state before shutdown.
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         eframe::set_value(storage, eframe::APP_KEY, self);
     }
 
     /// Called each time the UI needs repainting, which may be many times per second.
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         // Put your widgets into a `SidePanel`, `TopBottomPanel`, `CentralPanel`, `Window` or `Area`.
         // For inspiration and more examples, go to https://emilk.github.io/egui
+        let render_state = frame.wgpu_render_state().unwrap();
 
         egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
             // The top panel is often a good place for a menu bar:
 
             egui::MenuBar::new().ui(ui, |ui| {
-                // NOTE: no File->Quit on web pages!
-                let is_web = cfg!(target_arch = "wasm32");
-                if !is_web {
-                    ui.menu_button("File", |ui| {
-                        if ui.button("Quit").clicked() {
-                            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                ui.menu_button("File", |ui| {
+                    if ui.button("Open file...").clicked() {
+                        let open_file = async {
+                            let file = rfd::AsyncFileDialog::new()
+                                .add_filter("Object File Format", &["off"])
+                                .pick_file()
+                                .await;
+
+                            if let Some(file_handle) = file {
+                                let name = file_handle.file_name();
+                                if let Some(ext) = Path::new(&name)
+                                    .extension()
+                                    .map(|s| s.display().to_string())
+                                {
+                                    let bytes = file_handle.read().await;
+                                    if let Ok(mesh) = import(&ext, bytes.as_slice()) {
+                                        Ok((name, mesh))
+                                    } else {
+                                        Err(anyhow!("Import Error."))
+                                    }
+                                } else {
+                                    Err(anyhow!("No extension."))
+                                }
+                            } else {
+                                Err(anyhow!("Canceled."))
+                            }
+                        };
+
+                        let ctx = ctx.clone();
+                        let model = self.model.clone();
+                        let scene_data = self.scene_data.clone();
+                        let task = async move {
+                            let (name, mesh) = open_file.await?;
+
+                            if let Ok(mut model_guard) = model.lock()
+                                && let Ok(mut scene_data_guard) = scene_data.lock()
+                            {
+                                *scene_data_guard.vertices_mut() = Some(mesh.to_triangle_mesh());
+                                scene_data_guard
+                                    .camera_mut()
+                                    .reset_camera_by_aabb(&mesh.aabb());
+                                ctx.request_repaint(); // UIを再描画
+
+                                *model_guard = Some((name, mesh));
+                            }
+
+                            Ok(())
+                        };
+
+                        // Promiseとして非同期処理を開始
+                        #[cfg(not(target_arch = "wasm32"))]
+                        {
+                            self.import_promise =
+                                Some(Promise::from_ready(pollster::block_on(task)));
+                        }
+                        #[cfg(target_arch = "wasm32")]
+                        {
+                            self.import_promise = Some(Promise::spawn_local(task));
+                        }
+                    }
+                });
+                ui.menu_button("View", |ui| {
+                    if ui.button("Reset view").clicked()
+                        && let Ok(model_guard) = self.model.lock()
+                        && let Some((_, mesh)) = model_guard.as_ref()
+                        && let Ok(mut scene_data_guard) = self.scene_data.lock()
+                    {
+                        scene_data_guard
+                            .camera_mut()
+                            .reset_camera_by_aabb(&mesh.aabb());
+                    }
+
+                    ui.menu_button("Projection type", |ui| {
+                        if ui
+                            .add(RadioButton::new(
+                                self.projection_type == ProjectionType::Perspective,
+                                "Perspective",
+                            ))
+                            .clicked()
+                        {
+                            self.projection_type = ProjectionType::Perspective;
+                            if let Ok(mut scene_data_guard) = self.scene_data.lock() {
+                                scene_data_guard.camera_mut().set_projection_type(true);
+                            }
+                        } else if ui
+                            .add(RadioButton::new(
+                                self.projection_type == ProjectionType::Orthographic,
+                                "Orthographic",
+                            ))
+                            .clicked()
+                        {
+                            self.projection_type = ProjectionType::Orthographic;
+                            if let Ok(mut scene_data_guard) = self.scene_data.lock() {
+                                scene_data_guard.camera_mut().set_projection_type(false);
+                            }
                         }
                     });
-                    ui.add_space(16.0);
-                }
+                });
 
-                egui::widgets::global_theme_preference_buttons(ui);
+                ui.with_layout(
+                    egui::Layout::right_to_left(egui::Align::Center),
+                    egui::widgets::global_theme_preference_buttons,
+                );
             });
         });
 
         egui::TopBottomPanel::bottom("bottom panel").show(ctx, |ui| {
-            ui.heading("Bottom Panel");
+            if let Some(promise) = &self.import_promise {
+                match promise.ready() {
+                    None => {
+                        ui.spinner(); // 読み込み中
+                    }
+                    Some(Ok(_)) => {
+                        ui.heading("Imported.");
+                    }
+                    Some(Err(e)) => {
+                        ui.heading(e.to_string());
+                    }
+                };
+            } else {
+                ui.heading("Bottom Panel");
+            }
         });
 
-        egui::SidePanel::left("left panel").show(ctx, |ui| {
-            ui.heading("Left Panel");
-        });
+        // egui::SidePanel::left("left panel").show(ctx, |ui| {
+        //     ui.heading("Left Panel");
+        // });
 
         egui::SidePanel::right("right panel").show(ctx, |ui| {
-            ui.heading("Right Panel");
+            ui.heading("Properties");
+
+            egui::Grid::new("Model properties")
+                .num_columns(2)
+                .striped(true)
+                .show(ui, |ui| {
+                    if let Ok(model_guard) = self.model.lock()
+                        && let Some((name, mesh)) = model_guard.as_ref()
+                    {
+                        let size = mesh.aabb().size();
+
+                        ui.label("Name");
+                        ui.label(name);
+                        ui.end_row();
+
+                        ui.label("Width");
+                        ui.label(format!("{}", size.x));
+                        ui.end_row();
+
+                        ui.label("Height");
+                        ui.label(format!("{}", size.y));
+                        ui.end_row();
+
+                        ui.label("Depth");
+                        ui.label(format!("{}", size.z));
+                        ui.end_row();
+
+                        ui.label("Number of Vertices");
+                        ui.label(format!("{}", mesh.num_vertices()));
+                        ui.end_row();
+
+                        ui.label("Number of Faces");
+                        ui.label(format!("{}", mesh.num_faces()));
+                        ui.end_row();
+                    }
+                });
         });
 
         egui::CentralPanel::default().show(ctx, |ui| {
-            ui.heading("Custom Rendering Region");
+            // 描画領域
+            let rect = ui.available_rect_before_wrap();
 
-            // 描画領域を確保
-            let (rect, _) = ui.allocate_exact_size(ui.available_size(), egui::Sense::drag());
+            if let Ok(mut scene_data_guard) = self.scene_data.lock() {
+                scene_data_guard
+                    .camera_mut()
+                    .set_aspect_ratio(rect.aspect_ratio());
+            }
+
+            // マウス入力情報の取得
+            ui.input(|i| {
+                if let Ok(mut scene_data_guard) = self.scene_data.lock() {
+                    let area_size = (rect.width(), rect.height());
+
+                    if i.pointer.primary_down() {
+                        let delta = i.pointer.delta();
+                        scene_data_guard
+                            .camera_mut()
+                            .orbit((delta.x, delta.y), area_size);
+                    } else if i.pointer.secondary_down() {
+                        let delta = i.pointer.delta();
+                        scene_data_guard
+                            .camera_mut()
+                            .pan((delta.x, delta.y), area_size);
+                    }
+
+                    let scroll_delta = i.smooth_scroll_delta.y;
+                    if !(-0.01..0.01).contains(&scroll_delta) {
+                        let scroll_sensitivity = 0.005;
+                        scene_data_guard
+                            .camera_mut()
+                            .dolly(scroll_delta, scroll_sensitivity);
+                    }
+                }
+            });
+
+            if let Ok(mut renderer_guard) = self.renderer.lock()
+                && let Some(renderer) = renderer_guard.as_mut()
+            {
+                renderer.update_target_size(
+                    render_state,
+                    Extent2d::new(rect.width() as u32, rect.height() as u32),
+                );
+            }
 
             // wgpuの描画コールバックを登録
-            let cb = egui_wgpu::Callback::new_paint_callback(rect, TriangleCallback {});
+            let cb = egui_wgpu::Callback::new_paint_callback(
+                rect,
+                TriangleCallback {
+                    scene_data: self.scene_data.clone(),
+                },
+            );
             ui.painter().add(cb);
+
+            // 4. 描画結果のテクスチャをUIとして表示
+            if let Ok(renderer_guard) = self.renderer.lock()
+                && let Some(renderer) = renderer_guard.as_ref()
+                && let Some(target) = renderer.target()
+            {
+                ui.image(egui::load::SizedTexture::new(target.egui_id(), rect.size()));
+            }
         });
     }
 }
 
-// Rust側の頂点定義
-#[repr(C)]
-#[derive(Copy, Clone, Debug, Pod, Zeroable)]
-struct Vertex {
-    position: [f32; 3],
-    color: [f32; 3],
+struct TriangleCallback {
+    scene_data: Arc<Mutex<SceneDeta>>,
 }
-
-struct TriangleRenderer {
-    pipeline: wgpu::RenderPipeline,
-    vertex_buffer: wgpu::Buffer,
-    num_vertices: u32,
-}
-
-// 描画コマンドを発行するためのコールバック構造体
-struct TriangleCallback {}
 
 impl egui_wgpu::CallbackTrait for TriangleCallback {
     fn prepare(
         &self,
-        _device: &wgpu::Device,
-        _queue: &wgpu::Queue,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
         _screen_descriptor: &egui_wgpu::ScreenDescriptor,
-        _egui_encoder: &mut wgpu::CommandEncoder,
-        _callback_resources: &mut egui_wgpu::CallbackResources,
+        egui_encoder: &mut wgpu::CommandEncoder,
+        callback_resources: &mut egui_wgpu::CallbackResources,
     ) -> Vec<wgpu::CommandBuffer> {
-        // リソース（頂点バッファ等）の更新が必要な場合はここで行う
+        if let Some(r) = callback_resources.get::<Arc<Mutex<Option<TriangleRenderer>>>>()
+            && let Ok(mut renderer_guard) = r.lock()
+            && let Some(renderer) = renderer_guard.as_mut()
+            && let Ok(mut scene_data_guard) = self.scene_data.lock()
+        {
+            renderer.prepare(device, queue, &mut scene_data_guard);
+
+            if let Some(mut render_pass) = renderer.create_render_pass(egui_encoder) {
+                renderer.paint(&mut render_pass);
+                drop(render_pass);
+            }
+        }
+
         Vec::new()
     }
 
     fn paint(
         &self,
         _info: egui::PaintCallbackInfo,
-        render_pass: &mut wgpu::RenderPass<'static>,
-        callback_resources: &egui_wgpu::CallbackResources,
+        _render_pass: &mut wgpu::RenderPass<'static>,
+        _callback_resources: &egui_wgpu::CallbackResources,
     ) {
-        if let Some(r) = callback_resources.get::<TriangleRenderer>() {
-            render_pass.set_pipeline(&r.pipeline);
-            // バッファをスロット0にセットして描画
-            render_pass.set_vertex_buffer(0, r.vertex_buffer.slice(..));
-            render_pass.draw(0..r.num_vertices, 0..1);
-        }
+        // noop
     }
 }
