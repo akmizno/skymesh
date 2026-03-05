@@ -1,6 +1,6 @@
 {
-  "name": "egui Template PWA",
-  "short_name": "egui-template-pwa",
+  "name": "skymesh",
+  "short_name": "skymesh",
   "icons": [
     {
       "src": "./assets/icon-256.png",

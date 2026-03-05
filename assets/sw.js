@@ -1,4 +1,4 @@
-var cacheName = "egui-template-pwa";
+var cacheName = "skymesh";
 var filesToCache = ["./", "./index.html", "./skymesh.js", "./skymesh_bg.wasm"];
 
 /* Start the service worker and cache all of the app's content */
