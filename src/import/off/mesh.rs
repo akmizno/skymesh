@@ -12,10 +12,8 @@ pub(crate) struct OffMesh {
 
 impl OffMesh {
     pub(crate) fn import(data: &[u8]) -> Result<OffMesh> {
-        let builder = OffMeshBuilder::new();
-
         let s = str::from_utf8(data)?;
-        let (_, builder) = parse(s, builder).map_err(|e| e.to_owned())?;
+        let (_, builder) = parse(s).map_err(|e| e.to_owned())?;
 
         builder.build()
     }

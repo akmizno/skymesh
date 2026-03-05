@@ -94,6 +94,7 @@ impl eframe::App for App {
                     if ui.button("Open file...").clicked() {
                         let open_file = async {
                             let file = rfd::AsyncFileDialog::new()
+                                .add_filter("STL File Format", &["stl"])
                                 .add_filter("Object File Format", &["off"])
                                 .pick_file()
                                 .await;
@@ -105,10 +106,9 @@ impl eframe::App for App {
                                     .map(|s| s.display().to_string())
                                 {
                                     let bytes = file_handle.read().await;
-                                    if let Ok(mesh) = import(&ext, bytes.as_slice()) {
-                                        Ok((name, mesh))
-                                    } else {
-                                        Err(anyhow!("Import Error."))
+                                    match import(&ext, bytes.as_slice()) {
+                                        Ok(mesh) => Ok((name, mesh)),
+                                        Err(e) => Err(e),
                                     }
                                 } else {
                                     Err(anyhow!("No extension."))
@@ -122,7 +122,14 @@ impl eframe::App for App {
                         let model = self.model.clone();
                         let scene_data = self.scene_data.clone();
                         let task = async move {
-                            let (name, mesh) = open_file.await?;
+                            let result = open_file.await;
+
+                            let (name, mesh) = if let Err(e) = result {
+                                log::warn!("{}", e.root_cause());
+                                return Err(e);
+                            } else {
+                                result.unwrap()
+                            };
 
                             if let Ok(mut model_guard) = model.lock()
                                 && let Ok(mut scene_data_guard) = scene_data.lock()
@@ -211,7 +218,7 @@ impl eframe::App for App {
                     };
                 }
 
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.label(format!(
                         "{} v{}",
                         env!("CARGO_PKG_NAME"),

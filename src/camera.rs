@@ -228,7 +228,7 @@ impl Camera {
         self.proj_mat() * self.view_mat()
     }
 
-    pub(crate) fn position(&self) -> Vec3 {
-        self.view.eye()
+    pub(crate) fn direction(&self) -> Vec3 {
+        self.view.relative_pos()
     }
 }
