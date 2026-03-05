@@ -153,7 +153,7 @@ impl LightUniform {
     }
 
     pub(crate) fn from_camera(camera: &Camera) -> Self {
-        let pos = camera.position();
+        let pos = camera.direction();
         Self::new(pos)
     }
 }

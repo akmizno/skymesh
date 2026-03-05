@@ -12,7 +12,9 @@ use nom::{
 use super::mesh::{Face, Idx3, Idx4, IdxN, OffMeshBuilder, VertIdx, Vertex};
 use crate::model::{Color, Vec3};
 
-pub(super) fn parse(mut input: &str, mut builder: OffMeshBuilder) -> IResult<&str, OffMeshBuilder> {
+pub(super) fn parse(mut input: &str) -> IResult<&str, OffMeshBuilder> {
+    let mut builder = OffMeshBuilder::new();
+
     let (i, header) = parse_header(input)?;
     input = i;
 
