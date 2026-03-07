@@ -2,7 +2,7 @@ pub(super) mod ascii {
     use nom::{
         IResult, Parser,
         bytes::complete::tag_no_case,
-        character::complete::{multispace1, not_line_ending, space1},
+        character::complete::{multispace1, not_line_ending, space0, space1},
         combinator::{map, opt, peek},
         multi::many0_count,
         number::complete::float,
@@ -16,7 +16,7 @@ pub(super) mod ascii {
         mut input: &str,
         mut builder: StlMeshBuilder,
     ) -> IResult<&str, StlMeshBuilder> {
-        let (i, _header) = parse_header(input)?;
+        let (i, _header) = preceded(space0, parse_header).parse(input)?;
         input = i;
 
         while peek(preceded(skip_ignored, parse_endsolid))
