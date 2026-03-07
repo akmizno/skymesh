@@ -2,3 +2,7 @@
 filehash = false
 [watch]
 ignore = ["assets/sw.js"]
+[[hooks]]
+stage = "pre_build"
+command = "cargo"
+command_arguments = ["run", "--example", "gen_sw"]
