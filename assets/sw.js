@@ -1,5 +1,5 @@
 var cacheName = "skymesh";
-var filesToCache = ["./", "./index.html", "./skymesh.js", "./skymesh_bg.wasm"];
+var filesToCache = ["./", "./skymesh.js", "./skymesh_bg.wasm"];
 
 /* Start the service worker and cache all of the app's content */
 self.addEventListener("install", function (e) {
