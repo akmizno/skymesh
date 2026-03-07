@@ -94,6 +94,8 @@ impl eframe::App for App {
                     if ui.button("Open file...").clicked() {
                         let open_file = async {
                             let file = rfd::AsyncFileDialog::new()
+                                .add_filter("All supported formats", &["ply", "stl", "off"])
+                                .add_filter("PLY File Format", &["ply"])
                                 .add_filter("STL File Format", &["stl"])
                                 .add_filter("Object File Format", &["off"])
                                 .pick_file()

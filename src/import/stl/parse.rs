@@ -2,7 +2,7 @@ pub(super) mod ascii {
     use nom::{
         IResult, Parser,
         bytes::complete::tag_no_case,
-        character::complete::{multispace1, not_line_ending, space1},
+        character::complete::{multispace1, not_line_ending, space0, space1},
         combinator::{map, opt, peek},
         multi::many0_count,
         number::complete::float,
@@ -12,12 +12,11 @@ pub(super) mod ascii {
     use super::super::mesh::{Face, StlMeshBuilder, Vertex};
     use crate::model::Vec3;
 
-    pub(crate) fn parse(mut input: &str) -> IResult<&str, StlMeshBuilder> {
-        let mut builder = StlMeshBuilder::new();
-
-        let (i, _) = skip_ignored(input)?;
-        input = i;
-        let (i, _header) = parse_header(input)?;
+    pub(crate) fn parse(
+        mut input: &str,
+        mut builder: StlMeshBuilder,
+    ) -> IResult<&str, StlMeshBuilder> {
+        let (i, _header) = preceded(space0, parse_header).parse(input)?;
         input = i;
 
         while peek(preceded(skip_ignored, parse_endsolid))
@@ -38,20 +37,15 @@ pub(super) mod ascii {
         map(many0_count(multispace1), |_| ()).parse(input)
     }
 
-    struct Header {
-        _name: String,
+    struct Header<'a> {
+        _name: &'a str,
     }
 
-    fn parse_header(input: &str) -> IResult<&str, Header> {
+    fn parse_header(input: &str) -> IResult<&str, Header<'_>> {
         let (input, _) = tag_no_case("solid").parse(input)?;
         let (input, name) = preceded(space1, not_line_ending).parse(input)?;
 
-        Ok((
-            input,
-            Header {
-                _name: name.to_string(),
-            },
-        ))
+        Ok((input, Header { _name: name }))
     }
 
     fn parse_endsolid(input: &str) -> IResult<&str, ()> {
@@ -102,9 +96,10 @@ pub(super) mod binary {
     use super::super::mesh::{Face, StlMeshBuilder, Vertex};
     use crate::model::Vec3;
 
-    pub(crate) fn parse(mut input: &[u8]) -> IResult<&[u8], StlMeshBuilder> {
-        let mut builder = StlMeshBuilder::new();
-
+    pub(crate) fn parse(
+        mut input: &[u8],
+        mut builder: StlMeshBuilder,
+    ) -> IResult<&[u8], StlMeshBuilder> {
         let (i, header) = parse_header(input)?;
         input = i;
 

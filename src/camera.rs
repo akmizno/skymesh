@@ -22,6 +22,13 @@ impl Default for PerspectiveProjection {
 }
 
 impl PerspectiveProjection {
+    fn reset_by_aabb(&mut self, aabb: &Rect) {
+        let size = aabb.size();
+        let space = (size.x.max(size.y).max(size.z) * 2.).clamp(1000.0, 100000.0);
+
+        self.z_far = space;
+    }
+
     fn set_aspect_ratio(&mut self, aspect_ratio: f32) {
         self.aspect_ratio = aspect_ratio;
     }
@@ -152,6 +159,7 @@ impl Camera {
     }
 
     pub(crate) fn reset_camera_by_aabb(&mut self, aabb: &Rect) {
+        self.proj.reset_by_aabb(aabb);
         self.view.reset_by_aabb(aabb, self.proj.fov());
     }
 
