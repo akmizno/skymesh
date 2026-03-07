@@ -37,6 +37,7 @@ rfd = "0.17.2"
 anyhow = "1.0.101"
 nom = "8.0.0"
 glam = "0.32.0"
+ply-rs-bw = "3.0.1"
 
 # native:
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
