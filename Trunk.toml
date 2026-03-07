@@ -1,2 +1,4 @@
 [build]
 filehash = false
+[watch]
+ignore = ["assets/sw.js"]
