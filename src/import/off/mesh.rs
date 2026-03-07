@@ -13,8 +13,7 @@ pub(crate) struct OffMesh {
 impl OffMesh {
     pub(crate) fn import(data: &[u8]) -> Result<OffMesh> {
         let s = str::from_utf8(data)?;
-        let (_, builder) = parse(s).map_err(|e| e.to_owned())?;
-
+        let (_, builder) = parse(s, OffMeshBuilder::new()).map_err(|e| e.to_owned())?;
         builder.build()
     }
 }
@@ -38,7 +37,7 @@ impl Mesh for OffMesh {
         for f in self.faces.iter() {
             let face_color = f.color;
 
-            f.make_triangle(|vidx0, vidx1, vidx2| {
+            f.make_triangles(|vidx0, vidx1, vidx2| {
                 let v0 = self.vertices.get(vidx0).unwrap();
                 let v1 = self.vertices.get(vidx1).unwrap();
                 let v2 = self.vertices.get(vidx2).unwrap();
@@ -95,7 +94,7 @@ impl Idx3 {
         self.idx.iter().fold(0, |m, v| std::cmp::max(m, *v))
     }
 
-    fn make_triangle<F: FnMut(usize, usize, usize)>(&self, mut f: F) {
+    fn make_triangles<F: FnMut(usize, usize, usize)>(&self, mut f: F) {
         f(self.idx[0], self.idx[1], self.idx[2]);
     }
 }
@@ -114,7 +113,7 @@ impl Idx4 {
         self.idx.iter().fold(0, |m, v| std::cmp::max(m, *v))
     }
 
-    fn make_triangle<F: FnMut(usize, usize, usize)>(&self, mut f: F) {
+    fn make_triangles<F: FnMut(usize, usize, usize)>(&self, mut f: F) {
         f(self.idx[0], self.idx[1], self.idx[2]);
         f(self.idx[0], self.idx[2], self.idx[3]);
     }
@@ -134,7 +133,7 @@ impl IdxN {
         self.idx.iter().fold(0, |m, v| std::cmp::max(m, *v))
     }
 
-    fn make_triangle<F: FnMut(usize, usize, usize)>(&self, mut f: F) {
+    fn make_triangles<F: FnMut(usize, usize, usize)>(&self, mut f: F) {
         assert!(4 < self.idx.len());
         for i in 1..(self.idx.len() - 1) {
             f(self.idx[0], self.idx[i], self.idx[i + 1]);
@@ -159,11 +158,11 @@ impl VertIdx {
         max_idx <= upper_idx
     }
 
-    fn make_triangle<F: FnMut(usize, usize, usize)>(&self, f: F) {
+    fn make_triangles<F: FnMut(usize, usize, usize)>(&self, f: F) {
         match self {
-            Self::Idx3(idx) => idx.make_triangle(f),
-            Self::Idx4(idx) => idx.make_triangle(f),
-            Self::IdxN(idx) => idx.make_triangle(f),
+            Self::Idx3(idx) => idx.make_triangles(f),
+            Self::Idx4(idx) => idx.make_triangles(f),
+            Self::IdxN(idx) => idx.make_triangles(f),
         }
     }
 }
@@ -183,17 +182,14 @@ impl Face {
         self.vidx.is_valid(upper_idx) && self.color.as_ref().is_none_or(Color::is_valid)
     }
 
-    fn make_triangle<F: FnMut(usize, usize, usize)>(&self, f: F) {
-        self.vidx.make_triangle(f);
+    fn make_triangles<F: FnMut(usize, usize, usize)>(&self, f: F) {
+        self.vidx.make_triangles(f);
     }
 }
 
 #[derive(Debug, Clone)]
 pub(super) struct OffMeshBuilder {
     aabb: Rect,
-    num_vertices: usize,
-    num_faces: usize,
-    _num_edges: usize,
     vertices: Vec<Vertex>,
     faces: Vec<Face>,
 }
@@ -202,9 +198,6 @@ impl OffMeshBuilder {
     pub(super) fn new() -> Self {
         Self {
             aabb: Rect::new(),
-            num_vertices: 0,
-            num_faces: 0,
-            _num_edges: 0,
             vertices: Vec::new(),
             faces: Vec::new(),
         }
@@ -232,19 +225,16 @@ impl OffMeshBuilder {
     }
 
     pub(super) fn set_num_vertices(&mut self, num: usize) -> &mut Self {
-        self.num_vertices = num;
         self.vertices.reserve(num);
         self
     }
 
     pub(super) fn set_num_faces(&mut self, num: usize) -> &mut Self {
-        self.num_faces = num;
         self.faces.reserve(num);
         self
     }
 
-    pub(super) fn _set_num_edges(&mut self, num: usize) -> &mut Self {
-        self._num_edges = num;
+    pub(super) fn _set_num_edges(&mut self, _num: usize) -> &mut Self {
         self
     }
 

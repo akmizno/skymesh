@@ -9,6 +9,9 @@ use off::OffMesh;
 mod stl;
 use stl::StlMesh;
 
+mod ply;
+use ply::PlyMesh;
+
 pub(crate) enum ImportedMesh {
     Off(OffMesh),
     Stl(StlMesh),
