@@ -1,4 +1,4 @@
-var cacheName = "skymesh v0.1.6";
+var cacheName = "skymesh v0.1.7";
 var filesToCache = ["./", "./index.html", "./skymesh.js", "./skymesh_bg.wasm"];
 
 /* Start the service worker and cache all of the app's content */
