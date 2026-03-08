@@ -1,7 +1,7 @@
 use bytemuck::{Pod, Zeroable};
 use wgpu::util::DeviceExt;
 
-use crate::model::{Camera, Color, Mat4, Vec3};
+use crate::model::{Camera, Color, Lighting, Mat4, Reflection, Vec3};
 
 #[derive(Default, Debug, PartialEq, Copy, Clone)]
 pub(crate) struct Extent2d {
@@ -21,10 +21,14 @@ impl Extent2d {
     pub(crate) fn height(&self) -> u32 {
         self.height
     }
+
+    pub(crate) fn is_valid(&self) -> bool {
+        0 < self.width && 0 < self.height
+    }
 }
 
-#[derive(Default, Debug)]
-pub(crate) struct SceneDeta {
+#[derive(Debug)]
+pub(crate) struct SceneData {
     is_dirty_vertices: bool,
     vertices: Option<Vec<Vertex>>,
 
@@ -32,18 +36,24 @@ pub(crate) struct SceneDeta {
     light: LightUniform,
 }
 
-impl SceneDeta {
-    pub(crate) fn new(vertices: Option<Vec<Vertex>>, camera: Camera) -> Self {
+impl Default for SceneData {
+    fn default() -> Self {
+        Self::from_camera_lighting(&Camera::default(), &Lighting::default())
+    }
+}
+
+impl SceneData {
+    pub(crate) fn new(vertices: Option<Vec<Vertex>>, camera: &Camera, lighting: &Lighting) -> Self {
         Self {
             is_dirty_vertices: true,
             vertices,
-            camera: CameraUniform::from_camera(&camera),
-            light: LightUniform::from_camera(&camera),
+            camera: CameraUniform::from_camera(camera),
+            light: LightUniform::from_camera_lighting(camera, lighting),
         }
     }
 
-    pub(crate) fn from_camera(camera: Camera) -> Self {
-        Self::new(None, camera)
+    pub(crate) fn from_camera_lighting(camera: &Camera, lighting: &Lighting) -> Self {
+        Self::new(None, camera, lighting)
     }
 
     pub(crate) fn is_dirty_vertices(&self) -> bool {
@@ -63,9 +73,9 @@ impl SceneDeta {
         self.vertices = Some(vertices);
     }
 
-    pub(crate) fn update_camera_light(&mut self, camera: &Camera) {
+    pub(crate) fn update_camera_lighting(&mut self, camera: &Camera, lighting: &Lighting) {
         self.camera = CameraUniform::from_camera(camera);
-        self.light = LightUniform::from_camera(camera);
+        self.light = LightUniform::from_camera_lighting(camera, lighting);
     }
 
     fn camera(&self) -> &CameraUniform {
@@ -120,7 +130,7 @@ impl CameraUniform {
     }
 
     fn cast_slice(&self) -> &[u8] {
-        bytemuck::cast_slice(&self.view_proj)
+        bytemuck::bytes_of(self)
     }
 }
 
@@ -131,33 +141,34 @@ struct LightUniform {
     _padding0: f32,
     color: [f32; 3],
     _padding1: f32,
-}
-
-impl Default for LightUniform {
-    fn default() -> Self {
-        Self::new(Vec3::Z)
-    }
+    ambient: f32,
+    diffuse: f32,
+    specular: f32,
+    shininess: f32,
 }
 
 impl LightUniform {
-    const COLOR: [f32; 3] = [1.0, 1.0, 1.0];
+    fn new(dir: Vec3, color: &Color, reflection: &Reflection) -> Self {
+        let rgba = color.to_rgba();
 
-    fn new(dir: Vec3) -> Self {
         Self {
             dir: [dir.x, dir.y, dir.z],
-            color: Self::COLOR,
+            color: [rgba[0], rgba[1], rgba[2]],
+            ambient: reflection.ambient(),
+            diffuse: reflection.diffuse(),
+            specular: reflection.specular(),
+            shininess: reflection.shininess(),
             _padding0: 0.,
             _padding1: 0.,
         }
     }
 
-    pub(crate) fn from_camera(camera: &Camera) -> Self {
-        let pos = camera.direction();
-        Self::new(pos)
+    pub(crate) fn from_camera_lighting(camera: &Camera, lighting: &Lighting) -> Self {
+        Self::new(camera.direction(), lighting.color(), lighting.reflection())
     }
 
     fn cast_slice(&self) -> &[u8] {
-        bytemuck::cast_slice(&self.dir)
+        bytemuck::bytes_of(self)
     }
 }
 
@@ -267,8 +278,9 @@ impl TriangleRenderer {
         let target_format = render_state.target_format;
 
         let camera = Camera::default();
+        let lighting = Lighting::default();
         let camera_uniform = CameraUniform::from_camera(&camera);
-        let light_uniform = LightUniform::from_camera(&camera);
+        let light_uniform = LightUniform::from_camera_lighting(&camera, &lighting);
 
         let shader = device.create_shader_module(wgpu::include_wgsl!("shader.wgsl"));
 
@@ -405,23 +417,25 @@ impl TriangleRenderer {
         &mut self,
         render_state: &eframe::egui_wgpu::RenderState,
         extent: Extent2d,
-    ) -> egui::TextureId {
-        if self.target.is_none() {
+    ) -> Option<egui::TextureId> {
+        if !extent.is_valid() {
+            self.target = None;
+        } else if self.target.is_none() {
             self.target = Some(RenderTarget::new(render_state, extent));
         } else if let Some(target) = self.target.as_mut()
             && *target.extent() != extent
         {
-            self.target = Some(RenderTarget::new(render_state, extent));
+            *target = RenderTarget::new(render_state, extent);
         }
 
-        self.target.as_ref().unwrap().egui_id()
+        self.target.as_ref().map(|t| t.egui_id())
     }
 
     pub(crate) fn prepare(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        scene_data: &mut SceneDeta,
+        scene_data: &mut SceneData,
     ) {
         if let Some(vertices) = scene_data.vertices() {
             let size = vertices.len() as u32;

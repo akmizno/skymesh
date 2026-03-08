@@ -1,14 +1,15 @@
 use anyhow::{Result, anyhow};
 use eframe::egui_wgpu;
-use egui::widgets::RadioButton;
+use egui::widgets::color_picker::color_edit_button_rgb;
+use egui::widgets::{RadioButton, Slider};
 use poll_promise::Promise;
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::Mutex;
 
 use crate::import::import;
-use crate::model::{Camera, Document, Mesh, Model};
-use crate::render::{Extent2d, SceneDeta, TriangleRenderer};
+use crate::model::{Color, Document, Lighting, Mesh, Model, Reflection};
+use crate::render::{Extent2d, SceneData, TriangleRenderer};
 
 #[derive(serde::Deserialize, serde::Serialize)]
 #[serde(default)]
@@ -20,7 +21,7 @@ pub struct App {
     document: Arc<Mutex<Document>>,
 
     #[serde(skip)] // This how you opt-out of serialization of a field
-    scene_data: Arc<Mutex<SceneDeta>>,
+    scene_data: Arc<Mutex<SceneData>>,
 
     #[serde(skip)] // This how you opt-out of serialization of a field
     renderer: Option<Arc<Mutex<TriangleRenderer>>>,
@@ -28,15 +29,10 @@ pub struct App {
 
 impl Default for App {
     fn default() -> Self {
-        let camera = Camera::new(true);
-        let scene_data = SceneDeta::from_camera(camera.clone());
-
-        let document = Document::new(camera);
-
         Self {
             import_promise: None,
-            document: Arc::new(Mutex::new(document)),
-            scene_data: Arc::new(Mutex::new(scene_data)),
+            document: Arc::new(Mutex::new(Default::default())),
+            scene_data: Arc::new(Mutex::new(Default::default())),
             renderer: None,
         }
     }
@@ -110,7 +106,6 @@ impl eframe::App for App {
                             }
                         };
 
-                        let ctx = ctx.clone();
                         let document = self.document.clone();
                         let scene_data = self.scene_data.clone();
                         let task = async move {
@@ -132,8 +127,6 @@ impl eframe::App for App {
 
                                 document_guard.set_model(model);
                                 document_guard.reset_view();
-
-                                ctx.request_repaint();
                             }
 
                             Ok(())
@@ -149,39 +142,6 @@ impl eframe::App for App {
                             self.import_promise = Some(Promise::spawn_local(task));
                         }
                     }
-                });
-
-                ui.menu_button("View", |ui| {
-                    if ui.button("Reset view").clicked()
-                        && let Ok(mut document_guard) = self.document.lock()
-                    {
-                        document_guard.reset_view();
-                        ctx.request_repaint();
-                    }
-
-                    ui.menu_button("Projection type", |ui| {
-                        if let Ok(mut document_guard) = self.document.lock() {
-                            if ui
-                                .add(RadioButton::new(
-                                    document_guard.is_perspective_projection(),
-                                    "Perspective",
-                                ))
-                                .clicked()
-                            {
-                                document_guard.set_projection_type(true);
-                                ctx.request_repaint();
-                            } else if ui
-                                .add(RadioButton::new(
-                                    !document_guard.is_perspective_projection(),
-                                    "Orthographic",
-                                ))
-                                .clicked()
-                            {
-                                document_guard.set_projection_type(false);
-                                ctx.request_repaint();
-                            }
-                        }
-                    });
                 });
 
                 ui.with_layout(
@@ -217,71 +177,164 @@ impl eframe::App for App {
             });
         });
 
-        // egui::SidePanel::left("left panel").show(ctx, |ui| {
-        //     ui.heading("Left Panel");
-        // });
-
-        egui::SidePanel::right("right panel").show(ctx, |ui| {
-            ui.heading("Properties");
-
-            egui::Grid::new("Model properties")
-                .num_columns(2)
-                .striped(true)
-                .show(ui, |ui| {
-                    if let Ok(document_guard) = self.document.lock()
-                        && let Some(model) = document_guard.model()
+        egui::SidePanel::left("left panel").show(ctx, |ui| {
+            if let Ok(mut document_guard) = self.document.lock() {
+                egui::ScrollArea::vertical().show(ui, |ui| {
                     {
-                        let size = model.aabb().size();
+                        ui.heading("Camera Parameters");
 
-                        ui.label("Name");
-                        ui.label(model.name());
-                        ui.end_row();
+                        ui.label("Camera position");
+                        if ui.button("Reset").clicked() {
+                            document_guard.reset_view();
+                        }
 
-                        ui.label("Width");
-                        ui.label(format!("{}", size.x));
-                        ui.end_row();
+                        ui.label("Projection type");
+                        if ui
+                            .add(RadioButton::new(
+                                document_guard.is_perspective_projection(),
+                                "Perspective",
+                            ))
+                            .clicked()
+                        {
+                            document_guard.set_projection_type(true);
+                        } else if ui
+                            .add(RadioButton::new(
+                                !document_guard.is_perspective_projection(),
+                                "Orthographic",
+                            ))
+                            .clicked()
+                        {
+                            document_guard.set_projection_type(false);
+                        }
+                    }
 
-                        ui.label("Height");
-                        ui.label(format!("{}", size.y));
-                        ui.end_row();
+                    ui.separator();
 
-                        ui.label("Depth");
-                        ui.label(format!("{}", size.z));
-                        ui.end_row();
+                    ui.heading("Lighting Parameters");
+                    {
+                        if ui.button("Reset").clicked() {
+                            document_guard.reset_lighting()
+                        }
 
-                        ui.label("Number of Vertices");
-                        ui.label(format!("{}", model.num_vertices()));
-                        ui.end_row();
+                        let new_lighting = ui.vertical(|ui| {
+                            let new_color = ui.horizontal(|ui| {
+                                ui.label("Color");
+                                {
+                                    let rgba = document_guard.lighting().color().to_rgba();
 
-                        ui.label("Number of Faces");
-                        ui.label(format!("{}", model.num_faces()));
-                        ui.end_row();
+                                    let mut rgb = [rgba[0], rgba[1], rgba[2]];
+                                    color_edit_button_rgb(ui, &mut rgb);
+
+                                    Color::from_rgba(rgb[0], rgb[1], rgb[2], None)
+                                }
+                            });
+
+                            let reflection = document_guard.lighting().reflection();
+
+                            let mut ambient = reflection.ambient();
+                            let mut diffuse = reflection.diffuse();
+                            let mut specular = reflection.specular();
+                            let mut shininess = reflection.shininess();
+                            ui.add(Slider::new(&mut ambient, 0. ..=1.).text("Ambient"));
+                            ui.add(Slider::new(&mut diffuse, 0. ..=1.).text("Diffuse"));
+                            ui.add(Slider::new(&mut specular, 0. ..=1.).text("Specular"));
+                            ui.add(Slider::new(&mut shininess, 0. ..=100.).text("Shininess"));
+
+                            let new_reflection =
+                                Reflection::new(ambient, diffuse, specular, shininess);
+
+                            Lighting::new(new_color.inner, new_reflection)
+                        });
+
+                        document_guard.set_lighting(new_lighting.inner);
                     }
                 });
+            }
         });
+
+        egui::SidePanel::right("right panel")
+            .resizable(true)
+            .show(ctx, |ui| {
+                ui.heading("Model Properties");
+
+                egui::Grid::new("Model properties")
+                    .num_columns(2)
+                    .striped(true)
+                    .show(ui, |ui| {
+                        if let Ok(document_guard) = self.document.lock() {
+                            let (name, width, height, depth, num_vertices, num_faces) =
+                                if let Some(model) = document_guard.model() {
+                                    let size = model.aabb().size();
+                                    (
+                                        model.name().to_string(),
+                                        format!("{}", size.x),
+                                        format!("{}", size.y),
+                                        format!("{}", size.z),
+                                        format!("{}", model.num_vertices()),
+                                        format!("{}", model.num_faces()),
+                                    )
+                                } else {
+                                    (
+                                        "".to_string(),
+                                        "".to_string(),
+                                        "".to_string(),
+                                        "".to_string(),
+                                        "".to_string(),
+                                        "".to_string(),
+                                    )
+                                };
+
+                            ui.label("Name");
+                            ui.label(name);
+                            ui.end_row();
+
+                            ui.label("Width");
+                            ui.label(width);
+                            ui.end_row();
+
+                            ui.label("Height");
+                            ui.label(height);
+                            ui.end_row();
+
+                            ui.label("Depth");
+                            ui.label(depth);
+                            ui.end_row();
+
+                            ui.label("Number of Vertices");
+                            ui.label(num_vertices);
+                            ui.end_row();
+
+                            ui.label("Number of Faces");
+                            ui.label(num_faces);
+                            ui.end_row();
+                        }
+                    });
+            });
 
         egui::CentralPanel::default().show(ctx, |ui| {
             let rect = ui.available_rect_before_wrap();
 
-            ui.input(|i| {
-                if let Ok(mut document_guard) = self.document.lock() {
-                    let area_size = (rect.width(), rect.height());
+            if ui.ui_contains_pointer() {
+                ui.input(|i| {
+                    if let Ok(mut document_guard) = self.document.lock() {
+                        let area_size = (rect.width(), rect.height());
 
-                    if i.pointer.primary_down() {
-                        let delta = i.pointer.delta();
-                        document_guard.orbit_camera((delta.x, delta.y), area_size);
-                    } else if i.pointer.secondary_down() {
-                        let delta = i.pointer.delta();
-                        document_guard.pan_camera((delta.x, delta.y), area_size);
-                    }
+                        if i.pointer.primary_down() {
+                            let delta = i.pointer.delta();
+                            document_guard.orbit_camera((delta.x, delta.y), area_size);
+                        } else if i.pointer.secondary_down() {
+                            let delta = i.pointer.delta();
+                            document_guard.pan_camera((delta.x, delta.y), area_size);
+                        }
 
-                    let scroll_delta = i.smooth_scroll_delta.y;
-                    if !(-0.01..0.01).contains(&scroll_delta) {
-                        let scroll_sensitivity = 0.005;
-                        document_guard.dolly_camera(scroll_delta, scroll_sensitivity);
+                        let scroll_delta = i.smooth_scroll_delta.y;
+                        if !(-0.01..0.01).contains(&scroll_delta) {
+                            let scroll_sensitivity = 0.005;
+                            document_guard.dolly_camera(scroll_delta, scroll_sensitivity);
+                        }
                     }
-                }
-            });
+                });
+            }
 
             if let Some(renderer) = self.renderer.as_ref()
                 && let Ok(mut renderer_guard) = renderer.lock()
@@ -296,7 +349,8 @@ impl eframe::App for App {
                 && let Ok(mut scene_data_guard) = self.scene_data.lock()
             {
                 document_guard.set_view_aspect_ratio(rect.aspect_ratio());
-                scene_data_guard.update_camera_light(document_guard.camera());
+                scene_data_guard
+                    .update_camera_lighting(document_guard.camera(), document_guard.lighting());
             }
 
             let cb = egui_wgpu::Callback::new_paint_callback(
@@ -318,7 +372,7 @@ impl eframe::App for App {
 }
 
 struct TriangleCallback {
-    scene_data: Arc<Mutex<SceneDeta>>,
+    scene_data: Arc<Mutex<SceneData>>,
 }
 
 impl egui_wgpu::CallbackTrait for TriangleCallback {

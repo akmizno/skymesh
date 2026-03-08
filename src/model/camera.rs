@@ -148,12 +148,6 @@ impl Default for Camera {
 }
 
 impl Camera {
-    pub(crate) fn new(is_perspective: bool) -> Self {
-        let mut camera = Camera::default();
-        camera.set_projection_type(is_perspective);
-        camera
-    }
-
     pub(crate) fn set_projection_type(&mut self, is_perspective: bool) {
         self.is_perspective = is_perspective
     }

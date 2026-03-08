@@ -5,6 +5,9 @@ pub(crate) use glam::Vec3;
 mod camera;
 pub(crate) use camera::Camera;
 
+mod light;
+pub(crate) use light::{Lighting, Reflection};
+
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Rect {
     pt_min: Vec3,
@@ -129,22 +132,24 @@ impl Mesh for Model {
     }
 }
 
-#[derive(Debug)]
+#[derive(Default, Debug)]
 pub(crate) struct Document {
     model: Option<Model>,
     camera: Camera,
+    lighting: Lighting,
 }
 
 impl Document {
-    pub(crate) fn new(camera: Camera) -> Self {
-        Self {
-            model: None,
-            camera,
-        }
+    pub(crate) fn lighting(&self) -> &Lighting {
+        &self.lighting
     }
 
-    pub(crate) fn camera(&self) -> &Camera {
-        &self.camera
+    pub(crate) fn reset_lighting(&mut self) {
+        self.lighting = Default::default();
+    }
+
+    pub(crate) fn set_lighting(&mut self, lighting: Lighting) {
+        self.lighting = lighting;
     }
 
     pub(crate) fn model(&self) -> Option<&Model> {
@@ -161,6 +166,10 @@ impl Document {
         if let Some(model) = self.model() {
             self.camera.reset_camera_by_aabb(&model.aabb());
         }
+    }
+
+    pub(crate) fn camera(&self) -> &Camera {
+        &self.camera
     }
 
     pub(crate) fn set_view_aspect_ratio(&mut self, aspect_ratio: f32) {
