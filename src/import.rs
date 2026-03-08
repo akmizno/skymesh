@@ -12,6 +12,7 @@ use stl::StlMesh;
 mod ply;
 use ply::PlyMesh;
 
+#[derive(Debug)]
 pub(crate) enum ImportedMesh {
     Off(OffMesh),
     Stl(StlMesh),

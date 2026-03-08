@@ -6,21 +6,18 @@ use std::path::Path;
 use std::sync::Arc;
 use std::sync::Mutex;
 
-use crate::camera::Camera;
-use crate::import::{ImportedMesh, import};
-use crate::model::Mesh;
-use crate::render::{Extent2d, ProjectionType, SceneDeta, TriangleRenderer};
+use crate::import::import;
+use crate::model::{Camera, Document, Mesh, Model};
+use crate::render::{Extent2d, SceneDeta, TriangleRenderer};
 
 #[derive(serde::Deserialize, serde::Serialize)]
 #[serde(default)]
 pub struct App {
-    projection_type: ProjectionType,
-
     #[serde(skip)] // This how you opt-out of serialization of a field
     import_promise: Option<Promise<Result<()>>>,
 
     #[serde(skip)] // This how you opt-out of serialization of a field
-    model: Arc<Mutex<Option<(String, ImportedMesh)>>>,
+    document: Arc<Mutex<Document>>,
 
     #[serde(skip)] // This how you opt-out of serialization of a field
     scene_data: Arc<Mutex<SceneDeta>>,
@@ -31,14 +28,14 @@ pub struct App {
 
 impl Default for App {
     fn default() -> Self {
-        let projection_type = ProjectionType::Perspective;
-        let camera = Camera::new(projection_type.is_perspective());
-        let scene_data = SceneDeta::from_camera(camera);
+        let camera = Camera::new(true);
+        let scene_data = SceneDeta::from_camera(camera.clone());
+
+        let document = Document::new(camera);
 
         Self {
-            projection_type,
             import_promise: None,
-            model: Arc::new(Mutex::new(None)),
+            document: Arc::new(Mutex::new(document)),
             scene_data: Arc::new(Mutex::new(scene_data)),
             renderer: Arc::new(Mutex::new(None)),
         }
@@ -52,12 +49,6 @@ impl App {
         } else {
             Default::default()
         };
-
-        if let Ok(mut scene_data_guard) = app.scene_data.lock() {
-            scene_data_guard
-                .camera_mut()
-                .set_projection_type(app.projection_type.is_perspective());
-        }
 
         let wgpu_render_state = cc
             .wgpu_render_state
@@ -121,7 +112,7 @@ impl eframe::App for App {
                         };
 
                         let ctx = ctx.clone();
-                        let model = self.model.clone();
+                        let document = self.document.clone();
                         let scene_data = self.scene_data.clone();
                         let task = async move {
                             let result = open_file.await;
@@ -133,16 +124,17 @@ impl eframe::App for App {
                                 result.unwrap()
                             };
 
-                            if let Ok(mut model_guard) = model.lock()
+                            let model = Model::new(name, mesh);
+
+                            if let Ok(mut document_guard) = document.lock()
                                 && let Ok(mut scene_data_guard) = scene_data.lock()
                             {
-                                *scene_data_guard.vertices_mut() = Some(mesh.to_triangle_mesh());
-                                scene_data_guard
-                                    .camera_mut()
-                                    .reset_camera_by_aabb(&mesh.aabb());
-                                ctx.request_repaint();
+                                scene_data_guard.update_vertices(model.to_triangle_mesh());
 
-                                *model_guard = Some((name, mesh));
+                                document_guard.set_model(model);
+                                document_guard.reset_view();
+
+                                ctx.request_repaint();
                             }
 
                             Ok(())
@@ -159,39 +151,35 @@ impl eframe::App for App {
                         }
                     }
                 });
+
                 ui.menu_button("View", |ui| {
                     if ui.button("Reset view").clicked()
-                        && let Ok(model_guard) = self.model.lock()
-                        && let Some((_, mesh)) = model_guard.as_ref()
-                        && let Ok(mut scene_data_guard) = self.scene_data.lock()
+                        && let Ok(mut document_guard) = self.document.lock()
                     {
-                        scene_data_guard
-                            .camera_mut()
-                            .reset_camera_by_aabb(&mesh.aabb());
+                        document_guard.reset_view();
+                        ctx.request_repaint();
                     }
 
                     ui.menu_button("Projection type", |ui| {
-                        if ui
-                            .add(RadioButton::new(
-                                self.projection_type == ProjectionType::Perspective,
-                                "Perspective",
-                            ))
-                            .clicked()
-                        {
-                            self.projection_type = ProjectionType::Perspective;
-                            if let Ok(mut scene_data_guard) = self.scene_data.lock() {
-                                scene_data_guard.camera_mut().set_projection_type(true);
-                            }
-                        } else if ui
-                            .add(RadioButton::new(
-                                self.projection_type == ProjectionType::Orthographic,
-                                "Orthographic",
-                            ))
-                            .clicked()
-                        {
-                            self.projection_type = ProjectionType::Orthographic;
-                            if let Ok(mut scene_data_guard) = self.scene_data.lock() {
-                                scene_data_guard.camera_mut().set_projection_type(false);
+                        if let Ok(mut document_guard) = self.document.lock() {
+                            if ui
+                                .add(RadioButton::new(
+                                    document_guard.is_perspective_projection(),
+                                    "Perspective",
+                                ))
+                                .clicked()
+                            {
+                                document_guard.set_projection_type(true);
+                                ctx.request_repaint();
+                            } else if ui
+                                .add(RadioButton::new(
+                                    !document_guard.is_perspective_projection(),
+                                    "Orthographic",
+                                ))
+                                .clicked()
+                            {
+                                document_guard.set_projection_type(false);
+                                ctx.request_repaint();
                             }
                         }
                     });
@@ -241,13 +229,13 @@ impl eframe::App for App {
                 .num_columns(2)
                 .striped(true)
                 .show(ui, |ui| {
-                    if let Ok(model_guard) = self.model.lock()
-                        && let Some((name, mesh)) = model_guard.as_ref()
+                    if let Ok(document_guard) = self.document.lock()
+                        && let Some(model) = document_guard.model()
                     {
-                        let size = mesh.aabb().size();
+                        let size = model.aabb().size();
 
                         ui.label("Name");
-                        ui.label(name);
+                        ui.label(model.name());
                         ui.end_row();
 
                         ui.label("Width");
@@ -263,11 +251,11 @@ impl eframe::App for App {
                         ui.end_row();
 
                         ui.label("Number of Vertices");
-                        ui.label(format!("{}", mesh.num_vertices()));
+                        ui.label(format!("{}", model.num_vertices()));
                         ui.end_row();
 
                         ui.label("Number of Faces");
-                        ui.label(format!("{}", mesh.num_faces()));
+                        ui.label(format!("{}", model.num_faces()));
                         ui.end_row();
                     }
                 });
@@ -276,37 +264,32 @@ impl eframe::App for App {
         egui::CentralPanel::default().show(ctx, |ui| {
             let rect = ui.available_rect_before_wrap();
 
-            if let Ok(mut scene_data_guard) = self.scene_data.lock() {
-                scene_data_guard
-                    .camera_mut()
-                    .set_aspect_ratio(rect.aspect_ratio());
-            }
-
-            ui.input(|i| {
-                if let Ok(mut scene_data_guard) = self.scene_data.lock() {
-                    let area_size = (rect.width(), rect.height());
-
-                    if i.pointer.primary_down() {
-                        let delta = i.pointer.delta();
-                        scene_data_guard
-                            .camera_mut()
-                            .orbit((delta.x, delta.y), area_size);
-                    } else if i.pointer.secondary_down() {
-                        let delta = i.pointer.delta();
-                        scene_data_guard
-                            .camera_mut()
-                            .pan((delta.x, delta.y), area_size);
-                    }
-
-                    let scroll_delta = i.smooth_scroll_delta.y;
-                    if !(-0.01..0.01).contains(&scroll_delta) {
-                        let scroll_sensitivity = 0.005;
-                        scene_data_guard
-                            .camera_mut()
-                            .dolly(scroll_delta, scroll_sensitivity);
-                    }
+            // update model
+            {
+                if let Ok(mut document_guard) = self.document.lock() {
+                    document_guard.set_view_aspect_ratio(rect.aspect_ratio());
                 }
-            });
+
+                ui.input(|i| {
+                    if let Ok(mut document_guard) = self.document.lock() {
+                        let area_size = (rect.width(), rect.height());
+
+                        if i.pointer.primary_down() {
+                            let delta = i.pointer.delta();
+                            document_guard.orbit_camera((delta.x, delta.y), area_size);
+                        } else if i.pointer.secondary_down() {
+                            let delta = i.pointer.delta();
+                            document_guard.pan_camera((delta.x, delta.y), area_size);
+                        }
+
+                        let scroll_delta = i.smooth_scroll_delta.y;
+                        if !(-0.01..0.01).contains(&scroll_delta) {
+                            let scroll_sensitivity = 0.005;
+                            document_guard.dolly_camera(scroll_delta, scroll_sensitivity);
+                        }
+                    }
+                });
+            }
 
             if let Ok(mut renderer_guard) = self.renderer.lock()
                 && let Some(renderer) = renderer_guard.as_mut()
@@ -315,6 +298,12 @@ impl eframe::App for App {
                     render_state,
                     Extent2d::new(rect.width() as u32, rect.height() as u32),
                 );
+            }
+
+            if let Ok(document_guard) = self.document.lock()
+                && let Ok(mut scene_data_guard) = self.scene_data.lock()
+            {
+                scene_data_guard.update_camera_light(document_guard.camera());
             }
 
             let cb = egui_wgpu::Callback::new_paint_callback(

@@ -4,18 +4,6 @@ use wgpu::util::DeviceExt;
 use crate::camera::Camera;
 use crate::model::{Color, Mat4, Vec3};
 
-#[derive(serde::Deserialize, serde::Serialize, PartialEq)]
-pub(crate) enum ProjectionType {
-    Perspective,
-    Orthographic,
-}
-
-impl ProjectionType {
-    pub(crate) fn is_perspective(&self) -> bool {
-        matches!(self, Self::Perspective)
-    }
-}
-
 #[derive(Default, Debug, PartialEq, Copy, Clone)]
 pub(crate) struct Extent2d {
     width: u32,
@@ -41,8 +29,8 @@ pub(crate) struct SceneDeta {
     is_dirty_vertices: bool,
     vertices: Option<Vec<Vertex>>,
 
-    is_dirty_camera: bool,
-    camera: Camera,
+    camera: CameraUniform,
+    light: LightUniform,
 }
 
 impl SceneDeta {
@@ -50,8 +38,8 @@ impl SceneDeta {
         Self {
             is_dirty_vertices: true,
             vertices,
-            is_dirty_camera: true,
-            camera,
+            camera: CameraUniform::from_camera(&camera),
+            light: LightUniform::from_camera(&camera),
         }
     }
 
@@ -63,34 +51,30 @@ impl SceneDeta {
         self.is_dirty_vertices
     }
 
-    pub(crate) fn is_dirty_camera(&self) -> bool {
-        self.is_dirty_camera
-    }
-
-    pub(crate) fn set_dirty_vertices(&mut self, is_dirty: bool) {
-        self.is_dirty_vertices = is_dirty;
-    }
-
-    pub(crate) fn set_dirty_camera(&mut self, is_dirty: bool) {
-        self.is_dirty_camera = is_dirty;
+    fn clear_dirty_flag(&mut self) {
+        self.is_dirty_vertices = false;
     }
 
     pub(crate) fn vertices(&self) -> Option<&Vec<Vertex>> {
         self.vertices.as_ref()
     }
 
-    pub(crate) fn vertices_mut(&mut self) -> &mut Option<Vec<Vertex>> {
+    pub(crate) fn update_vertices(&mut self, vertices: Vec<Vertex>) {
         self.is_dirty_vertices = true;
-        &mut self.vertices
+        self.vertices = Some(vertices);
     }
 
-    pub(crate) fn camera(&self) -> &Camera {
+    pub(crate) fn update_camera_light(&mut self, camera: &Camera) {
+        self.camera = CameraUniform::from_camera(camera);
+        self.light = LightUniform::from_camera(camera);
+    }
+
+    fn camera(&self) -> &CameraUniform {
         &self.camera
     }
 
-    pub(crate) fn camera_mut(&mut self) -> &mut Camera {
-        self.is_dirty_camera = true;
-        &mut self.camera
+    fn light(&self) -> &LightUniform {
+        &self.light
     }
 }
 
@@ -115,9 +99,15 @@ impl Vertex {
 }
 
 #[repr(C)]
-#[derive(Copy, Clone, Pod, Zeroable)]
+#[derive(Debug, Copy, Clone, Pod, Zeroable)]
 struct CameraUniform {
     view_proj: [[f32; 4]; 4],
+}
+
+impl Default for CameraUniform {
+    fn default() -> Self {
+        Self::from_mat4(&Mat4::IDENTITY)
+    }
 }
 
 impl CameraUniform {
@@ -129,15 +119,25 @@ impl CameraUniform {
             view_proj: mat4.to_cols_array_2d(),
         }
     }
+
+    fn cast_slice(&self) -> &[u8] {
+        bytemuck::cast_slice(&self.view_proj)
+    }
 }
 
 #[repr(C)]
-#[derive(Copy, Clone, Pod, Zeroable)]
+#[derive(Debug, Copy, Clone, Pod, Zeroable)]
 struct LightUniform {
     dir: [f32; 3],
     _padding0: f32,
     color: [f32; 3],
     _padding1: f32,
+}
+
+impl Default for LightUniform {
+    fn default() -> Self {
+        Self::new(Vec3::Z)
+    }
 }
 
 impl LightUniform {
@@ -155,6 +155,10 @@ impl LightUniform {
     pub(crate) fn from_camera(camera: &Camera) -> Self {
         let pos = camera.direction();
         Self::new(pos)
+    }
+
+    fn cast_slice(&self) -> &[u8] {
+        bytemuck::cast_slice(&self.dir)
     }
 }
 
@@ -448,23 +452,11 @@ impl TriangleRenderer {
             let raw_data = bytemuck::cast_slice(vertices);
             queue.write_buffer(vertex_buffer, 0, raw_data);
 
-            scene_data.set_dirty_vertices(false);
+            scene_data.clear_dirty_flag();
         }
 
-        if scene_data.is_dirty_camera() {
-            let camera = scene_data.camera();
-
-            let camera_uniform = [CameraUniform::from_camera(camera)];
-            let light_uniform = [LightUniform::from_camera(camera)];
-
-            let camera_raw_data = bytemuck::cast_slice(&camera_uniform);
-            let light_raw_data = bytemuck::cast_slice(&light_uniform);
-
-            queue.write_buffer(&self.camera_buffer, 0, camera_raw_data);
-            queue.write_buffer(&self.light_buffer, 0, light_raw_data);
-
-            scene_data.set_dirty_camera(false);
-        }
+        queue.write_buffer(&self.camera_buffer, 0, scene_data.camera().cast_slice());
+        queue.write_buffer(&self.light_buffer, 0, scene_data.light().cast_slice());
     }
 
     pub(crate) fn create_render_pass<'a>(

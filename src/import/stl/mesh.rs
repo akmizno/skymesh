@@ -4,6 +4,7 @@ use super::parse;
 use crate::model::{Color, Mesh, Rect, Vec3};
 use crate::render;
 
+#[derive(Debug)]
 pub(crate) struct StlMesh {
     aabb: Rect,
     faces: Vec<Face>,

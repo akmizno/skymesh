@@ -158,6 +158,10 @@ impl Camera {
         self.is_perspective = is_perspective
     }
 
+    pub(crate) fn is_perspective(&self) -> bool {
+        self.is_perspective
+    }
+
     pub(crate) fn reset_camera_by_aabb(&mut self, aabb: &Rect) {
         self.proj.reset_by_aabb(aabb);
         self.view.reset_by_aabb(aabb, self.proj.fov());
