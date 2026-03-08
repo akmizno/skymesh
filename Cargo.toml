@@ -1,10 +1,10 @@
 [package]
 name = "skymesh"
-version = "0.1.6"
+version = "0.1.7"
 edition = "2024"
 authors = ["Akira Mizuno <akmizno@gmail.com>"]
 description = "A cross-platform mesh viewer for Native and Web."
-repository = "https://github.com/akmizno/skyview"
+repository = "https://github.com/akmizno/skymesh"
 license = "MIT OR Apache-2.0"
 readme = "README.md"
 
