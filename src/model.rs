@@ -1,8 +1,9 @@
-pub(crate) use crate::camera::Camera;
+pub(crate) use glam::Mat4;
+pub(crate) use glam::Quat;
+pub(crate) use glam::Vec3;
 
-pub(crate) type Vec3 = glam::Vec3;
-pub(crate) type Mat4 = glam::Mat4;
-pub(crate) type Quat = glam::Quat;
+mod camera;
+pub(crate) use camera::Camera;
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Rect {

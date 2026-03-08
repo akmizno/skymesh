@@ -13,12 +13,11 @@ pub(crate) struct StlMesh {
 impl StlMesh {
     pub(crate) fn import(data: &[u8]) -> Result<StlMesh> {
         // Try ASCII
-        if let Ok(s) = str::from_utf8(data) {
-            if let Ok((_, builder)) =
+        if let Ok(s) = str::from_utf8(data)
+            && let Ok((_, builder)) =
                 parse::ascii::parse(s, StlMeshBuilder::new()).map_err(|e| log::debug!("{}", e))
-            {
-                return builder.build();
-            }
+        {
+            return builder.build();
         }
 
         // Try Binary

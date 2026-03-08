@@ -1,4 +1,4 @@
-use crate::model::{Mat4, Quat, Rect, Vec3};
+use super::{Mat4, Quat, Rect, Vec3};
 
 const DEFAULT_AREA_SCALE: f32 = 2.;
 

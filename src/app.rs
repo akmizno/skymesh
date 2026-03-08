@@ -23,7 +23,7 @@ pub struct App {
     scene_data: Arc<Mutex<SceneDeta>>,
 
     #[serde(skip)] // This how you opt-out of serialization of a field
-    renderer: Arc<Mutex<Option<TriangleRenderer>>>,
+    renderer: Option<Arc<Mutex<TriangleRenderer>>>,
 }
 
 impl Default for App {
@@ -37,14 +37,14 @@ impl Default for App {
             import_promise: None,
             document: Arc::new(Mutex::new(document)),
             scene_data: Arc::new(Mutex::new(scene_data)),
-            renderer: Arc::new(Mutex::new(None)),
+            renderer: None,
         }
     }
 }
 
 impl App {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
-        let app: Self = if let Some(storage) = cc.storage {
+        let mut app: Self = if let Some(storage) = cc.storage {
             eframe::get_value(storage, eframe::APP_KEY).unwrap_or_default()
         } else {
             Default::default()
@@ -55,17 +55,16 @@ impl App {
             .as_ref()
             .expect("Wgpu render state not found");
 
-        let renderer = TriangleRenderer::new(wgpu_render_state);
+        let renderer = Arc::new(Mutex::new(TriangleRenderer::new(wgpu_render_state)));
 
-        if let Ok(mut renderer_guard) = app.renderer.lock() {
-            *renderer_guard = Some(renderer);
-        }
+        assert!(app.renderer.is_none());
+        app.renderer = Some(renderer.clone());
 
         wgpu_render_state
             .renderer
             .write()
             .callback_resources
-            .insert(app.renderer.clone());
+            .insert(renderer.clone());
 
         app
     }
@@ -264,45 +263,39 @@ impl eframe::App for App {
         egui::CentralPanel::default().show(ctx, |ui| {
             let rect = ui.available_rect_before_wrap();
 
-            // update model
-            {
+            ui.input(|i| {
                 if let Ok(mut document_guard) = self.document.lock() {
-                    document_guard.set_view_aspect_ratio(rect.aspect_ratio());
-                }
+                    let area_size = (rect.width(), rect.height());
 
-                ui.input(|i| {
-                    if let Ok(mut document_guard) = self.document.lock() {
-                        let area_size = (rect.width(), rect.height());
-
-                        if i.pointer.primary_down() {
-                            let delta = i.pointer.delta();
-                            document_guard.orbit_camera((delta.x, delta.y), area_size);
-                        } else if i.pointer.secondary_down() {
-                            let delta = i.pointer.delta();
-                            document_guard.pan_camera((delta.x, delta.y), area_size);
-                        }
-
-                        let scroll_delta = i.smooth_scroll_delta.y;
-                        if !(-0.01..0.01).contains(&scroll_delta) {
-                            let scroll_sensitivity = 0.005;
-                            document_guard.dolly_camera(scroll_delta, scroll_sensitivity);
-                        }
+                    if i.pointer.primary_down() {
+                        let delta = i.pointer.delta();
+                        document_guard.orbit_camera((delta.x, delta.y), area_size);
+                    } else if i.pointer.secondary_down() {
+                        let delta = i.pointer.delta();
+                        document_guard.pan_camera((delta.x, delta.y), area_size);
                     }
-                });
-            }
 
-            if let Ok(mut renderer_guard) = self.renderer.lock()
-                && let Some(renderer) = renderer_guard.as_mut()
+                    let scroll_delta = i.smooth_scroll_delta.y;
+                    if !(-0.01..0.01).contains(&scroll_delta) {
+                        let scroll_sensitivity = 0.005;
+                        document_guard.dolly_camera(scroll_delta, scroll_sensitivity);
+                    }
+                }
+            });
+
+            if let Some(renderer) = self.renderer.as_ref()
+                && let Ok(mut renderer_guard) = renderer.lock()
             {
-                renderer.update_target_size(
+                renderer_guard.update_target_size(
                     render_state,
                     Extent2d::new(rect.width() as u32, rect.height() as u32),
                 );
             }
 
-            if let Ok(document_guard) = self.document.lock()
+            if let Ok(mut document_guard) = self.document.lock()
                 && let Ok(mut scene_data_guard) = self.scene_data.lock()
             {
+                document_guard.set_view_aspect_ratio(rect.aspect_ratio());
                 scene_data_guard.update_camera_light(document_guard.camera());
             }
 
@@ -314,9 +307,9 @@ impl eframe::App for App {
             );
             ui.painter().add(cb);
 
-            if let Ok(renderer_guard) = self.renderer.lock()
-                && let Some(renderer) = renderer_guard.as_ref()
-                && let Some(target) = renderer.target()
+            if let Some(renderer) = self.renderer.as_ref()
+                && let Ok(renderer_guard) = renderer.lock()
+                && let Some(target) = renderer_guard.target()
             {
                 ui.image(egui::load::SizedTexture::new(target.egui_id(), rect.size()));
             }
@@ -337,15 +330,14 @@ impl egui_wgpu::CallbackTrait for TriangleCallback {
         egui_encoder: &mut wgpu::CommandEncoder,
         callback_resources: &mut egui_wgpu::CallbackResources,
     ) -> Vec<wgpu::CommandBuffer> {
-        if let Some(r) = callback_resources.get::<Arc<Mutex<Option<TriangleRenderer>>>>()
+        if let Some(r) = callback_resources.get::<Arc<Mutex<TriangleRenderer>>>()
             && let Ok(mut renderer_guard) = r.lock()
-            && let Some(renderer) = renderer_guard.as_mut()
             && let Ok(mut scene_data_guard) = self.scene_data.lock()
         {
-            renderer.prepare(device, queue, &mut scene_data_guard);
+            renderer_guard.prepare(device, queue, &mut scene_data_guard);
 
-            if let Some(mut render_pass) = renderer.create_render_pass(egui_encoder) {
-                renderer.paint(&mut render_pass);
+            if let Some(mut render_pass) = renderer_guard.create_render_pass(egui_encoder) {
+                renderer_guard.paint(&mut render_pass);
                 drop(render_pass);
             }
         }

@@ -1,8 +1,7 @@
 use bytemuck::{Pod, Zeroable};
 use wgpu::util::DeviceExt;
 
-use crate::camera::Camera;
-use crate::model::{Color, Mat4, Vec3};
+use crate::model::{Camera, Color, Mat4, Vec3};
 
 #[derive(Default, Debug, PartialEq, Copy, Clone)]
 pub(crate) struct Extent2d {
