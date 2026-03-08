@@ -1,4 +1,4 @@
-use crate::model::{Mat4, Quat, Rect, Vec3};
+use super::{Mat4, Quat, Rect, Vec3};
 
 const DEFAULT_AREA_SCALE: f32 = 2.;
 
@@ -148,14 +148,12 @@ impl Default for Camera {
 }
 
 impl Camera {
-    pub(crate) fn new(is_perspective: bool) -> Self {
-        let mut camera = Camera::default();
-        camera.set_projection_type(is_perspective);
-        camera
-    }
-
     pub(crate) fn set_projection_type(&mut self, is_perspective: bool) {
         self.is_perspective = is_perspective
+    }
+
+    pub(crate) fn is_perspective(&self) -> bool {
+        self.is_perspective
     }
 
     pub(crate) fn reset_camera_by_aabb(&mut self, aabb: &Rect) {

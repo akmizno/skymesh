@@ -1,80 +1,66 @@
 use anyhow::{Result, anyhow};
 use eframe::egui_wgpu;
-use egui::widgets::RadioButton;
+use egui::widgets::color_picker::color_edit_button_rgb;
+use egui::widgets::{RadioButton, Slider};
 use poll_promise::Promise;
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::Mutex;
 
-use crate::camera::Camera;
-use crate::import::{ImportedMesh, import};
-use crate::model::Mesh;
-use crate::render::{Extent2d, ProjectionType, SceneDeta, TriangleRenderer};
+use crate::import::import;
+use crate::model::{Color, Document, Lighting, Mesh, Model, Reflection};
+use crate::render::{Extent2d, SceneData, TriangleRenderer};
 
 #[derive(serde::Deserialize, serde::Serialize)]
 #[serde(default)]
 pub struct App {
-    projection_type: ProjectionType,
-
     #[serde(skip)] // This how you opt-out of serialization of a field
     import_promise: Option<Promise<Result<()>>>,
 
     #[serde(skip)] // This how you opt-out of serialization of a field
-    model: Arc<Mutex<Option<(String, ImportedMesh)>>>,
+    document: Arc<Mutex<Document>>,
 
     #[serde(skip)] // This how you opt-out of serialization of a field
-    scene_data: Arc<Mutex<SceneDeta>>,
+    scene_data: Arc<Mutex<SceneData>>,
 
     #[serde(skip)] // This how you opt-out of serialization of a field
-    renderer: Arc<Mutex<Option<TriangleRenderer>>>,
+    renderer: Option<Arc<Mutex<TriangleRenderer>>>,
 }
 
 impl Default for App {
     fn default() -> Self {
-        let projection_type = ProjectionType::Perspective;
-        let camera = Camera::new(projection_type.is_perspective());
-        let scene_data = SceneDeta::from_camera(camera);
-
         Self {
-            projection_type,
             import_promise: None,
-            model: Arc::new(Mutex::new(None)),
-            scene_data: Arc::new(Mutex::new(scene_data)),
-            renderer: Arc::new(Mutex::new(None)),
+            document: Arc::new(Mutex::new(Default::default())),
+            scene_data: Arc::new(Mutex::new(Default::default())),
+            renderer: None,
         }
     }
 }
 
 impl App {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
-        let app: Self = if let Some(storage) = cc.storage {
+        let mut app: Self = if let Some(storage) = cc.storage {
             eframe::get_value(storage, eframe::APP_KEY).unwrap_or_default()
         } else {
             Default::default()
         };
-
-        if let Ok(mut scene_data_guard) = app.scene_data.lock() {
-            scene_data_guard
-                .camera_mut()
-                .set_projection_type(app.projection_type.is_perspective());
-        }
 
         let wgpu_render_state = cc
             .wgpu_render_state
             .as_ref()
             .expect("Wgpu render state not found");
 
-        let renderer = TriangleRenderer::new(wgpu_render_state);
+        let renderer = Arc::new(Mutex::new(TriangleRenderer::new(wgpu_render_state)));
 
-        if let Ok(mut renderer_guard) = app.renderer.lock() {
-            *renderer_guard = Some(renderer);
-        }
+        assert!(app.renderer.is_none());
+        app.renderer = Some(renderer.clone());
 
         wgpu_render_state
             .renderer
             .write()
             .callback_resources
-            .insert(app.renderer.clone());
+            .insert(renderer.clone());
 
         app
     }
@@ -120,8 +106,7 @@ impl eframe::App for App {
                             }
                         };
 
-                        let ctx = ctx.clone();
-                        let model = self.model.clone();
+                        let document = self.document.clone();
                         let scene_data = self.scene_data.clone();
                         let task = async move {
                             let result = open_file.await;
@@ -133,16 +118,15 @@ impl eframe::App for App {
                                 result.unwrap()
                             };
 
-                            if let Ok(mut model_guard) = model.lock()
+                            let model = Model::new(name, mesh);
+
+                            if let Ok(mut document_guard) = document.lock()
                                 && let Ok(mut scene_data_guard) = scene_data.lock()
                             {
-                                *scene_data_guard.vertices_mut() = Some(mesh.to_triangle_mesh());
-                                scene_data_guard
-                                    .camera_mut()
-                                    .reset_camera_by_aabb(&mesh.aabb());
-                                ctx.request_repaint();
+                                scene_data_guard.update_vertices(model.to_triangle_mesh());
 
-                                *model_guard = Some((name, mesh));
+                                document_guard.set_model(model);
+                                document_guard.reset_view();
                             }
 
                             Ok(())
@@ -158,43 +142,6 @@ impl eframe::App for App {
                             self.import_promise = Some(Promise::spawn_local(task));
                         }
                     }
-                });
-                ui.menu_button("View", |ui| {
-                    if ui.button("Reset view").clicked()
-                        && let Ok(model_guard) = self.model.lock()
-                        && let Some((_, mesh)) = model_guard.as_ref()
-                        && let Ok(mut scene_data_guard) = self.scene_data.lock()
-                    {
-                        scene_data_guard
-                            .camera_mut()
-                            .reset_camera_by_aabb(&mesh.aabb());
-                    }
-
-                    ui.menu_button("Projection type", |ui| {
-                        if ui
-                            .add(RadioButton::new(
-                                self.projection_type == ProjectionType::Perspective,
-                                "Perspective",
-                            ))
-                            .clicked()
-                        {
-                            self.projection_type = ProjectionType::Perspective;
-                            if let Ok(mut scene_data_guard) = self.scene_data.lock() {
-                                scene_data_guard.camera_mut().set_projection_type(true);
-                            }
-                        } else if ui
-                            .add(RadioButton::new(
-                                self.projection_type == ProjectionType::Orthographic,
-                                "Orthographic",
-                            ))
-                            .clicked()
-                        {
-                            self.projection_type = ProjectionType::Orthographic;
-                            if let Ok(mut scene_data_guard) = self.scene_data.lock() {
-                                scene_data_guard.camera_mut().set_projection_type(false);
-                            }
-                        }
-                    });
                 });
 
                 ui.with_layout(
@@ -230,91 +177,180 @@ impl eframe::App for App {
             });
         });
 
-        // egui::SidePanel::left("left panel").show(ctx, |ui| {
-        //     ui.heading("Left Panel");
-        // });
-
-        egui::SidePanel::right("right panel").show(ctx, |ui| {
-            ui.heading("Properties");
-
-            egui::Grid::new("Model properties")
-                .num_columns(2)
-                .striped(true)
-                .show(ui, |ui| {
-                    if let Ok(model_guard) = self.model.lock()
-                        && let Some((name, mesh)) = model_guard.as_ref()
+        egui::SidePanel::left("left panel").show(ctx, |ui| {
+            if let Ok(mut document_guard) = self.document.lock() {
+                egui::ScrollArea::vertical().show(ui, |ui| {
                     {
-                        let size = mesh.aabb().size();
+                        ui.heading("Camera Parameters");
 
-                        ui.label("Name");
-                        ui.label(name);
-                        ui.end_row();
+                        ui.label("Camera position");
+                        if ui.button("Reset").clicked() {
+                            document_guard.reset_view();
+                        }
 
-                        ui.label("Width");
-                        ui.label(format!("{}", size.x));
-                        ui.end_row();
+                        ui.label("Projection type");
+                        if ui
+                            .add(RadioButton::new(
+                                document_guard.is_perspective_projection(),
+                                "Perspective",
+                            ))
+                            .clicked()
+                        {
+                            document_guard.set_projection_type(true);
+                        } else if ui
+                            .add(RadioButton::new(
+                                !document_guard.is_perspective_projection(),
+                                "Orthographic",
+                            ))
+                            .clicked()
+                        {
+                            document_guard.set_projection_type(false);
+                        }
+                    }
 
-                        ui.label("Height");
-                        ui.label(format!("{}", size.y));
-                        ui.end_row();
+                    ui.separator();
 
-                        ui.label("Depth");
-                        ui.label(format!("{}", size.z));
-                        ui.end_row();
+                    ui.heading("Lighting Parameters");
+                    {
+                        if ui.button("Reset").clicked() {
+                            document_guard.reset_lighting()
+                        }
 
-                        ui.label("Number of Vertices");
-                        ui.label(format!("{}", mesh.num_vertices()));
-                        ui.end_row();
+                        let new_lighting = ui.vertical(|ui| {
+                            let new_color = ui.horizontal(|ui| {
+                                ui.label("Color");
+                                {
+                                    let rgba = document_guard.lighting().color().to_rgba();
 
-                        ui.label("Number of Faces");
-                        ui.label(format!("{}", mesh.num_faces()));
-                        ui.end_row();
+                                    let mut rgb = [rgba[0], rgba[1], rgba[2]];
+                                    color_edit_button_rgb(ui, &mut rgb);
+
+                                    Color::from_rgba(rgb[0], rgb[1], rgb[2], None)
+                                }
+                            });
+
+                            let reflection = document_guard.lighting().reflection();
+
+                            let mut ambient = reflection.ambient();
+                            let mut diffuse = reflection.diffuse();
+                            let mut specular = reflection.specular();
+                            let mut shininess = reflection.shininess();
+                            ui.add(Slider::new(&mut ambient, 0. ..=1.).text("Ambient"));
+                            ui.add(Slider::new(&mut diffuse, 0. ..=1.).text("Diffuse"));
+                            ui.add(Slider::new(&mut specular, 0. ..=1.).text("Specular"));
+                            ui.add(Slider::new(&mut shininess, 0. ..=100.).text("Shininess"));
+
+                            let new_reflection =
+                                Reflection::new(ambient, diffuse, specular, shininess);
+
+                            Lighting::new(new_color.inner, new_reflection)
+                        });
+
+                        document_guard.set_lighting(new_lighting.inner);
                     }
                 });
+            }
         });
+
+        egui::SidePanel::right("right panel")
+            .resizable(true)
+            .show(ctx, |ui| {
+                ui.heading("Model Properties");
+
+                egui::Grid::new("Model properties")
+                    .num_columns(2)
+                    .striped(true)
+                    .show(ui, |ui| {
+                        if let Ok(document_guard) = self.document.lock() {
+                            let (name, width, height, depth, num_vertices, num_faces) =
+                                if let Some(model) = document_guard.model() {
+                                    let size = model.aabb().size();
+                                    (
+                                        model.name().to_string(),
+                                        format!("{}", size.x),
+                                        format!("{}", size.y),
+                                        format!("{}", size.z),
+                                        format!("{}", model.num_vertices()),
+                                        format!("{}", model.num_faces()),
+                                    )
+                                } else {
+                                    (
+                                        "".to_string(),
+                                        "".to_string(),
+                                        "".to_string(),
+                                        "".to_string(),
+                                        "".to_string(),
+                                        "".to_string(),
+                                    )
+                                };
+
+                            ui.label("Name");
+                            ui.label(name);
+                            ui.end_row();
+
+                            ui.label("Width");
+                            ui.label(width);
+                            ui.end_row();
+
+                            ui.label("Height");
+                            ui.label(height);
+                            ui.end_row();
+
+                            ui.label("Depth");
+                            ui.label(depth);
+                            ui.end_row();
+
+                            ui.label("Number of Vertices");
+                            ui.label(num_vertices);
+                            ui.end_row();
+
+                            ui.label("Number of Faces");
+                            ui.label(num_faces);
+                            ui.end_row();
+                        }
+                    });
+            });
 
         egui::CentralPanel::default().show(ctx, |ui| {
             let rect = ui.available_rect_before_wrap();
 
-            if let Ok(mut scene_data_guard) = self.scene_data.lock() {
-                scene_data_guard
-                    .camera_mut()
-                    .set_aspect_ratio(rect.aspect_ratio());
+            if ui.ui_contains_pointer() {
+                ui.input(|i| {
+                    if let Ok(mut document_guard) = self.document.lock() {
+                        let area_size = (rect.width(), rect.height());
+
+                        if i.pointer.primary_down() {
+                            let delta = i.pointer.delta();
+                            document_guard.orbit_camera((delta.x, delta.y), area_size);
+                        } else if i.pointer.secondary_down() {
+                            let delta = i.pointer.delta();
+                            document_guard.pan_camera((delta.x, delta.y), area_size);
+                        }
+
+                        let scroll_delta = i.smooth_scroll_delta.y;
+                        if !(-0.01..0.01).contains(&scroll_delta) {
+                            let scroll_sensitivity = 0.005;
+                            document_guard.dolly_camera(scroll_delta, scroll_sensitivity);
+                        }
+                    }
+                });
             }
 
-            ui.input(|i| {
-                if let Ok(mut scene_data_guard) = self.scene_data.lock() {
-                    let area_size = (rect.width(), rect.height());
-
-                    if i.pointer.primary_down() {
-                        let delta = i.pointer.delta();
-                        scene_data_guard
-                            .camera_mut()
-                            .orbit((delta.x, delta.y), area_size);
-                    } else if i.pointer.secondary_down() {
-                        let delta = i.pointer.delta();
-                        scene_data_guard
-                            .camera_mut()
-                            .pan((delta.x, delta.y), area_size);
-                    }
-
-                    let scroll_delta = i.smooth_scroll_delta.y;
-                    if !(-0.01..0.01).contains(&scroll_delta) {
-                        let scroll_sensitivity = 0.005;
-                        scene_data_guard
-                            .camera_mut()
-                            .dolly(scroll_delta, scroll_sensitivity);
-                    }
-                }
-            });
-
-            if let Ok(mut renderer_guard) = self.renderer.lock()
-                && let Some(renderer) = renderer_guard.as_mut()
+            if let Some(renderer) = self.renderer.as_ref()
+                && let Ok(mut renderer_guard) = renderer.lock()
             {
-                renderer.update_target_size(
+                renderer_guard.update_target_size(
                     render_state,
                     Extent2d::new(rect.width() as u32, rect.height() as u32),
                 );
+            }
+
+            if let Ok(mut document_guard) = self.document.lock()
+                && let Ok(mut scene_data_guard) = self.scene_data.lock()
+            {
+                document_guard.set_view_aspect_ratio(rect.aspect_ratio());
+                scene_data_guard
+                    .update_camera_lighting(document_guard.camera(), document_guard.lighting());
             }
 
             let cb = egui_wgpu::Callback::new_paint_callback(
@@ -325,9 +361,9 @@ impl eframe::App for App {
             );
             ui.painter().add(cb);
 
-            if let Ok(renderer_guard) = self.renderer.lock()
-                && let Some(renderer) = renderer_guard.as_ref()
-                && let Some(target) = renderer.target()
+            if let Some(renderer) = self.renderer.as_ref()
+                && let Ok(renderer_guard) = renderer.lock()
+                && let Some(target) = renderer_guard.target()
             {
                 ui.image(egui::load::SizedTexture::new(target.egui_id(), rect.size()));
             }
@@ -336,7 +372,7 @@ impl eframe::App for App {
 }
 
 struct TriangleCallback {
-    scene_data: Arc<Mutex<SceneDeta>>,
+    scene_data: Arc<Mutex<SceneData>>,
 }
 
 impl egui_wgpu::CallbackTrait for TriangleCallback {
@@ -348,15 +384,14 @@ impl egui_wgpu::CallbackTrait for TriangleCallback {
         egui_encoder: &mut wgpu::CommandEncoder,
         callback_resources: &mut egui_wgpu::CallbackResources,
     ) -> Vec<wgpu::CommandBuffer> {
-        if let Some(r) = callback_resources.get::<Arc<Mutex<Option<TriangleRenderer>>>>()
+        if let Some(r) = callback_resources.get::<Arc<Mutex<TriangleRenderer>>>()
             && let Ok(mut renderer_guard) = r.lock()
-            && let Some(renderer) = renderer_guard.as_mut()
             && let Ok(mut scene_data_guard) = self.scene_data.lock()
         {
-            renderer.prepare(device, queue, &mut scene_data_guard);
+            renderer_guard.prepare(device, queue, &mut scene_data_guard);
 
-            if let Some(mut render_pass) = renderer.create_render_pass(egui_encoder) {
-                renderer.paint(&mut render_pass);
+            if let Some(mut render_pass) = renderer_guard.create_render_pass(egui_encoder) {
+                renderer_guard.paint(&mut render_pass);
                 drop(render_pass);
             }
         }

@@ -19,6 +19,10 @@ struct LightUniform {
     _padding0: f32,
     color: vec3<f32>,
     _padding1: f32,
+    ambient: f32,
+    diffuse: f32,
+    specular: f32,
+    shininess: f32,
 };
 
 @group(0) @binding(0)
@@ -43,10 +47,10 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let light_dir = normalize(light.dir);
     let light_color = light.color;
 
-    let ambient_weight = 0.3;
-    let diffuse_weight = 0.5;
-    let specular_weight = 0.4;
-    let shininess = 30.;
+    let ambient_weight = light.ambient;
+    let diffuse_weight = light.diffuse;
+    let specular_weight = light.specular;
+    let shininess = light.shininess;
 
     let normal = normalize(in.world_normal);
     let diffuse_strength = max(dot(normal, light_dir), 0.0);

@@ -4,6 +4,7 @@ use ply_rs_bw as ply;
 use crate::model::{Color, Mesh, Rect, Vec3};
 use crate::render;
 
+#[derive(Debug)]
 pub(crate) struct PlyMesh {
     aabb: Rect,
     vertices: Vec<Vertex>,

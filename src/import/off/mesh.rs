@@ -4,6 +4,7 @@ use super::parse::parse;
 use crate::model::{Color, Mesh, Rect, Vec3};
 use crate::render;
 
+#[derive(Debug)]
 pub(crate) struct OffMesh {
     aabb: Rect,
     vertices: Vec<Vertex>,
