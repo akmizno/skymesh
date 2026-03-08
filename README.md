@@ -41,17 +41,29 @@ You can test your browser's WebGPU support here:
 | STL File Format | ☑                  | [Link](https://people.math.sc.edu/Burkardt/data/stla/stla.html) |
 | OFF File Format | ☑                  | [Link](https://people.math.sc.edu/Burkardt/data/off/off.html)   |
 
-## Build
+## Build and Install
 
-### Native (Desktop)
+### Install from Crates.io (Desktop)
 
-To run the native desktop application:
+To install and run the native desktop application from [crates.io](https://crates.io/crates/skymesh):
+
+```bash
+# Install from crates.io
+cargo install skymesh
+
+# Run installed application
+skymesh
+```
+
+### Build from Source (Desktop)
+
+To build and run the native desktop application from source:
 
 ```bash
 cargo run --release
 ```
 
-### WebAssembly (Wasm).
+### Build from Source for Web (Wasm).
 
 To run the browser version locally, you will need [Trunk](https://trunkrs.dev/):
 
